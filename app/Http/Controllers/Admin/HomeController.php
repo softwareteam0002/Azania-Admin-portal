@@ -19,7 +19,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 class HomeController extends Controller
 {
-    private const MWANGA_BIN = 581677;
+    private const AZANIA_BIN = 604980;
 
     public function index()
     {
@@ -70,7 +70,7 @@ class HomeController extends Controller
         }
 
         // Proceed with operator login if category is 'operator'
-        if ($json_data->category == 'operator') {
+        if ($json_data->category === 'operator') {
             $operatorMsisdn = $json_data->username;
             $operatorPassword = $json_data->password;
 
@@ -112,7 +112,7 @@ class HomeController extends Controller
                                 $commision_ac = $operatorDevice->commisionac;
                                 $token = JWTAuth::fromUser($operator);
                                 Log::channel('agency')->info("Login Successful");
-                                return $this->signPayload(json_encode(['token' => $token, 'error' => 'false', 'operator' => $operator, 'trading_account' => $trading_ac, 'BanksDetails' => $bankDetails, 'BankLimits' => $bankLimits, 'InteroperabilityBins' => $interoperabilityBins, 'bank_bin' => self::MWANGA_BIN]), $key);
+                                return $this->signPayload(json_encode(['token' => $token, 'error' => 'false', 'operator' => $operator, 'trading_account' => $trading_ac, 'BanksDetails' => $bankDetails, 'BankLimits' => $bankLimits, 'InteroperabilityBins' => $interoperabilityBins, 'bank_bin' => self::AZANIA_BIN]), $key);
                             } else {
                                 // Handle incorrect password
                                 $this->handleIncorrectPassword($operator, $loginCount);
@@ -243,7 +243,7 @@ class HomeController extends Controller
     {
         $agents = TblAgent::get();
         foreach ($agents as $agent) {
-            $updated = TblAgent::where(['agent_id' => $agent->agent_id])->update(['agent_password' => Hash::make($agent->agent_password)]);
+            TblAgent::where(['agent_id' => $agent->agent_id])->update(['agent_password' => Hash::make($agent->agent_password)]);
         }
         echo "Success";
     }
@@ -252,7 +252,7 @@ class HomeController extends Controller
     {
         $operators = Operator::get();
         foreach ($operators as $operator) {
-            $updated = Operator::where(['operator_id' => $operator->operator_id])->update(['operator_password' => Hash::make($operator->operator_password)]);
+            Operator::where(['operator_id' => $operator->operator_id])->update(['operator_password' => Hash::make($operator->operator_password)]);
         }
         echo "Success";
     }
