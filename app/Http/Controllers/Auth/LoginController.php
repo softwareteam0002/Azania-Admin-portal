@@ -285,7 +285,7 @@ class LoginController extends Controller
         // Compose the email message
         $message = "Dear **{$name}**,  \n\nYour Login OTP is **{$otp}**. This OTP will be valid for 5 minutes.";
 
-        session()->put('message', "Login OTP has been sent to $maskedEmail");
+        session()->put('notification', "OTP has been sent to $maskedEmail");
         session()->put('color', "success");
 
         // Queue the email notification
