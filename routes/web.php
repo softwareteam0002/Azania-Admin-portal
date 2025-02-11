@@ -5,13 +5,13 @@ use Illuminate\Support\Facades\Route;
 
 Auth::routes(['register' => false]);
 
-Route::redirect('/', '/mhbportal/login');
+Route::redirect('/', '/azaniaportal/login');
 
 Route::redirect('/home', '/admin');
 Route::middleware('auth')->prefix('two_factor_authentication')->group(function () {
-	Route::get('/', [TwoFactorAuth::class, 'index'])->name('two_factor_authentication.index');
-	Route::post('/verify', [TwoFactorAuth::class, 'verifyOtp'])->name('two-fa.verify');
-	Route::get('/resend', [TwoFactorAuth::class, 'resendOtp'])->name('two-fa.resend');
+    Route::get('/', [TwoFactorAuth::class, 'index'])->name('two_factor_authentication.index');
+    Route::post('/verify', [TwoFactorAuth::class, 'verifyOtp'])->name('two-fa.verify');
+    Route::get('/resend', [TwoFactorAuth::class, 'resendOtp'])->name('two-fa.resend');
 });
 Route::get('change_password', 'Auth\ChangePasswordController@index')->name('change_password');
 Route::post('update_password', 'Auth\ChangePasswordController@updatePassword')->name('update-password');
@@ -19,8 +19,8 @@ Route::post('update_password', 'Auth\ChangePasswordController@updatePassword')->
 //recover password
 Route::get('forgot_password', 'Auth\ForgotPasswordController@index')->name('forgot-password');
 Route::post('recover/update_password', 'Auth\ForgotPasswordController@updatePassword')->name('recover-update-password');
-Route::post('send_link','Auth\ForgotPasswordController@sendResetLink')->name('send-link');
-Route::get('set_credentials','Auth\ForgotPasswordController@showResetForm')->name('set-credentials');
+Route::post('send_link', 'Auth\ForgotPasswordController@sendResetLink')->name('send-link');
+Route::get('set_credentials', 'Auth\ForgotPasswordController@showResetForm')->name('set-credentials');
 
 
 Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Admin', 'middleware' => ['auth', 'verified']], function () {
@@ -79,9 +79,6 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Admin', 'mi
     //password policy routes
     Route::get('password_policy', 'Settings\PasswordPolicyController@index');
     Route::post('password_policy/store', 'Settings\PasswordPolicyController@storePasswordPolicy');
-
-
-
 
 
 });
