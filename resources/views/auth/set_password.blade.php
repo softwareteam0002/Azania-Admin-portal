@@ -17,11 +17,9 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.css" rel="stylesheet"/>
 </head>
 
-<body
-    style="background-image: url('{{ asset('public/images/mhb_background.jpeg') }}'); background-size: cover; width: 100%; height: 100vh;">
+<body class="login-bg">
 <div>
-    <div class="container"
-         style="position: absolute; top: 200px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 1000px;">
+    <div class="container set-cont">
         <!-- Row for two columns -->
         <div class="row">
             <!-- Second Container (You can customize this container as needed) -->
