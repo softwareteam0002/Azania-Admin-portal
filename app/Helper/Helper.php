@@ -5,30 +5,10 @@ namespace App\Helper;
 use App\AuditTrailLogs;
 use App\PasswordPolicy;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Str;
 use Random\RandomException;
 
 class Helper
 {
-    public function auditTracker($request)
-    {
-        try {
-            $db_action = AuditTrailLogs::insert([
-                'user_id' => $request->user_id,
-                'module' => $request->module,
-                'action' => $request->action,
-                'action_time' => $request->action_time,
-                'reason' => $request->reasson,
-                'old_details' => $request->old_details,
-                'new_details' => $request->new_details
-            ]);
-
-        } catch (\Exception $e) {
-            echo json_encode($e->getMessage());
-        }
-
-    }
-
     public function auditTrack($request, $notification, $color)
     {
         try {
@@ -42,7 +22,7 @@ class Helper
                 'new_details' => $request->new_details
             ]);
 
-            if ($db_action == true) {
+            if ($db_action) {
                 return redirect()->back()->with(['notification' => $notification, 'color' => $color]);
             }
 
@@ -53,25 +33,24 @@ class Helper
     }
 
 
-    public function auditTrail($action, $module, $notification, $url, $user_id)
+    public function auditTrail($action, $module, $notification, $url, $user_id): \Illuminate\Routing\Redirector|\Illuminate\Http\RedirectResponse|\Illuminate\Contracts\Foundation\Application
     {
         //Audit trail details
         $request['user_id'] = $user_id;
         $request['module'] = $module;
         $request['action'] = $action;
-        $request['action_time'] = Carbon::now()->setTimezone('Africa/Nairobi');;
+        $request['action_time'] = Carbon::now()->setTimezone('Africa/Nairobi');
         $request['reason'] = "NULL";
 
-
-        return self::changeTracker($request, $notification, $url);
+        return $this->changeTracker($request, $notification, $url);
 
     }
 
-    public function changeTracker($request, $notification, $end_point)
+    public function changeTracker($request, $notification, $end_point): \Illuminate\Routing\Redirector|\Illuminate\Http\RedirectResponse|\Illuminate\Contracts\Foundation\Application
     {
         try {
 
-            $db_action = AuditTrailLogs::insert([
+            AuditTrailLogs::insert([
                 'user_id' => $request['user_id'],
                 'module' => $request['module'],
                 'action' => $request['action'],
@@ -88,34 +67,27 @@ class Helper
         }
     }
 
-    public static function mappingValues($request)
-    {
-        $mapper = [
-            'user_id' => $request->user_id,
-            'module' => $request->module,
-            'action' => $request->action,
-            'action_time' => $request->action_time,
-            'reason' => $request->reasson,
-            'old_details' => $request->old_details,
-            'new_details' => $request->new_details
-        ];
-    }
-
+    /**
+     * @throws RandomException
+     */
     public static function randomNumberGenerator($length): int
     {
-        $min = 10 ** ($length - 1);
-        $max = (10 ** $length) - 1;
+        if (env('APP_ENV') === 'production') {
+            $min = 10 ** ($length - 1);
+            $max = (10 ** $length) - 1;
 
-        return random_int($min, $max);
+            return random_int($min, $max);
+        }
+        return 123456;
     }
 
     public static function maskEmail($email): string
     {
         // Split the email into username and domain parts
-        list($username, $domain) = explode('@', $email);
+        [$username, $domain] = explode('@', $email);
 
         // Mask the username except for the first character
-        $maskedUsername = substr($username, 0, 1) . str_repeat('*', strlen($username) - 1);
+        $maskedUsername = $username[0] . str_repeat('*', strlen($username) - 1);
 
         // Construct the masked email
         return $maskedUsername . '@' . $domain;
@@ -123,10 +95,11 @@ class Helper
 
     /**
      * @throws RandomException
+     * @throws RandomException
      */
     public static function generatePassword(): string|\Illuminate\Http\RedirectResponse
     {
-        $policy = PasswordPolicy::where('status', 1)->first();
+        $policy = PasswordPolicy::query()->where('status', 1)->first();
         if (!$policy) {
             $notification = 'Password Policy not set. Please contact administrator.';
             $color = 'danger';
