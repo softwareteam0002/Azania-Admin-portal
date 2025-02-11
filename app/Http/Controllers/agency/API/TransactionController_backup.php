@@ -58,12 +58,12 @@ class TransactionController extends Controller
                 break;
             case Constants::BALANCE_INQUIRY:
                 // Save Reprinting details transaction
-                return $this->sendRequest($url . 'AgentBalanceInquiry', $request); 
+                return $this->sendRequest($url . 'AgentBalanceInquiry', $request);
 			case Constants::UTILITY_PAYMENTS:
                 // Utility Payments transaction
                 return $this->sendRequest($url . 'AgentUtilityPayments', $request);
                 break;
-			case Constants::CustomerQueryControlNumberDetails:
+			case Constants::CUSTOMER_QUERY_CTL_DETAILS:
                 // Utility Payments transaction
                 return $this->sendRequest($url . 'CustomerQueryControlNumberDetails', $request);
                 break;
@@ -84,7 +84,7 @@ class TransactionController extends Controller
         if (!$deviceId) {
             return response()->json(['code' => 115, 'message' => 'Failed to decode token']);
         }
-		
+
         //get device imei
         $device = $this->getDevice($deviceId);
         if (!$device) {
@@ -102,7 +102,7 @@ class TransactionController extends Controller
                 'deviceimei1' => $imei1,
                 'deviceimei2' => $imei2,
             ])->post($endpoint, $request->all());
-			
+
 			$body = json_decode($response->body(), true);
 			Log::channel('agency')->info("AGENCY-TRANSACTION-RESPONSE: " . json_encode($body));
           return $response;
