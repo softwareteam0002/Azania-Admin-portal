@@ -6,7 +6,6 @@ use App\AbBranch;
 use App\Devices;
 use App\Helper\Helper;
 use App\Http\Controllers\Controller;
-use App\Http\Requests\MassDestroyUserRequest;
 use App\Mail\EmailNotification;
 use App\Role;
 use App\TblAdminActionLevel;
@@ -28,7 +27,7 @@ class UsersController extends Controller
 
     public function index()
     {
-        //abort_unless(\Gate::allows('um_users_access'), 403);
+        abort_unless(\Gate::allows('um_users_access'), 403);
         $users = User::orderBy('id', 'DESC')->latest()->get();
         $roles = Role::all();
         $actions = TblAdminActionLevel::all();
@@ -37,7 +36,7 @@ class UsersController extends Controller
 
     public function create()
     {
-        // abort_unless(\Gate::allows('um_users_create'), 403);
+        abort_unless(\Gate::allows('um_users_create'), 403);
         $roles = Role::all();
         $actions = TblAdminActionLevel::all();
         return view('admin.users.create', compact('roles', 'actions'));
@@ -101,7 +100,7 @@ class UsersController extends Controller
 
     public function edit(User $user)
     {
-        //abort_unless(\Gate::allows('um_users_edit'), 403);
+        abort_unless(\Gate::allows('um_users_edit'), 403);
         $roles = Role::all();
         $user_roles = $user->roles()->pluck('id', 'id')->toArray();
         $actions = TblAdminActionLevel::all();
@@ -110,32 +109,42 @@ class UsersController extends Controller
 
     public function update(Request $request)
     {
-        //abort_unless(\Gate::allows('um_users_edit'), 403);
-        $old_details = User::where('id', Crypt::decrypt($request->id))->get()[0];
-        $decryptedId = Crypt::decrypt($request->id);
-        $user = User::find($decryptedId);
-        $user->name = $request->name;
-        $user->email = $request->email;
-        $user->action_id = $request->action_id;
-        $user->initiator_id = Auth::user()->id;
-        $user->isWaitingApproval = 1;
-        $user->approver_id = 0;
-        $user->update();
-        // Sync roles
-        $user->roles()->sync($request['roles']);
-        $new_details = User::where('id', Crypt::decrypt($request->id))->get()[0];
+        abort_unless(\Gate::allows('um_users_edit'), 403);
+        DB::beginTransaction();
+        try {
+            $old_details = User::where('id', Crypt::decrypt($request->id))->get()[0];
+            $decryptedId = Crypt::decrypt($request->id);
+            $user = User::find($decryptedId);
+            $user->name = $request->name;
+            $user->email = $request->email;
+            $user->action_id = $request->action_id;
+            $user->initiator_id = Auth::user()->id;
+            $user->isWaitingApproval = 1;
+            $user->approver_id = 0;
+            $user->update();
+            // Sync roles
+            $user->roles()->sync($request['roles']);
+            $new_details = User::where('id', Crypt::decrypt($request->id))->get()[0];
 
-        $request['user_id'] = Auth::user()->getAuthIdentifier();
-        $request['module'] = "ESB Portal";
-        $request['action'] = "Update user";
-        $request['action_time'] = now();
-        $request['reason'] = "NULL";
-        $request['old_details'] = $old_details;
-        $request['new_details'] = $new_details;
+            $request['user_id'] = Auth::user()->getAuthIdentifier();
+            $request['module'] = "ESB Portal";
+            $request['action'] = "Update user";
+            $request['action_time'] = now();
+            $request['reason'] = "NULL";
+            $request['old_details'] = $old_details;
+            $request['new_details'] = $new_details;
 
-        $log = new Helper();
-        return $log->auditTrack($request, "User updated successfully", "success");
-
+            $log = new Helper();
+            DB::commit();
+            return $log->auditTrack($request, "User updated successfully", "success");
+        } catch (\Exception $e) {
+            Log::error("Update User Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            DB::rollBack();
+            return back()->with([
+                'notification' => 'Something went wrong, try again later!',
+                'color' => 'danger',
+            ]);
+        }
     }
 
     public function show(Request $r)
@@ -263,15 +272,19 @@ class UsersController extends Controller
     public function deleteUserActApproval(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
+        try {
+            if ($request->reject === 'reject') {
+                User::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDeleted' => 0]);
+                return redirect()->route('admin.users.index')->with(['notification' => 'User deleting has been rejected successfully', 'color' => 'success']);
+            }
 
-            User::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDeleted' => 0]);
-            return redirect()->route('admin.users.index')->with(['notification' => 'User deleting has been rejected successfully', 'color' => 'success']);
-        }
-
-        if ($request->approve == 'approve') {
-            User::where(['id' => $id])->delete();
-            return redirect()->route('admin.users.index')->with(['notification' => 'User deleting has been approved successfully', 'color' => 'success']);
+            if ($request->approve === 'approve') {
+                User::where(['id' => $id])->delete();
+                return redirect()->route('admin.users.index')->with(['notification' => 'User deleting has been approved successfully', 'color' => 'success']);
+            }
+        } catch (\Exception $e) {
+            Log::error("Delete User Approval Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return redirect()->route('admin.users.index')->with(['notification' => 'Something went wrong, try again later!', 'color' => 'danger']);
         }
     }
 
@@ -290,16 +303,22 @@ class UsersController extends Controller
             'device_id' => 'required'
         ]);
 
-        $update = Devices::where('device_id', $request->device_id)
-            ->update([
-                'device_status' => $status
-            ]);
+        try {
+            $update = Devices::where('device_id', $request->device_id)
+                ->update([
+                    'device_status' => $status
+                ]);
 
-        if ($update == true) {
-            $notification = "Device activated successfully";
-            $color = "success";
-        } else {
-            $notification = "Oops something went wrong!";
+            if ($update) {
+                $notification = "Device activated successfully";
+                $color = "success";
+            } else {
+                $notification = "Oops something went wrong!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error("Device Activation Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            $notification = "Something went wrong, try again later!";
             $color = "danger";
         }
 
@@ -314,16 +333,22 @@ class UsersController extends Controller
             'device_id' => 'required'
         ]);
 
-        $update = Devices::where('device_id', $request->device_id)
-            ->update([
-                'device_status' => $status
-            ]);
+        try {
+            $update = Devices::where('device_id', $request->device_id)
+                ->update([
+                    'device_status' => $status
+                ]);
 
-        if ($update == true) {
-            $notification = "Device de-activated successfully";
-            $color = "success";
-        } else {
-            $notification = "Oops something went wrong!";
+            if ($update) {
+                $notification = "Device de-activated successfully";
+                $color = "success";
+            } else {
+                $notification = "Oops something went wrong!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error("Device Deactivation Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            $notification = "Something went wrong, try again later!";
             $color = "danger";
         }
 
@@ -354,160 +379,167 @@ class UsersController extends Controller
         ]);
 
         //Validation imei1 and imei2 should not be the same
-        if ($request->device_imei1 == $request->device_imei2) {
+        if ($request->device_imei1 === $request->device_imei2) {
             return redirect()->back()->with(['notification' => 'IMEI Number 1 should not Match IMEI Number 2!', 'color' => 'danger']);
         }
 
-        //check  to see if there is device imei 2 in the request
-        if (isset($request->device_imei2)) {
-            $imei2 = $request->device_imei2;
-        } else {
-            $imei2 = null;
-        }
+        try {
+            $update = Devices::where('device_id', $request->device_id)
+                ->update([
+                    'device_imei1' => $request->device_imei1,
+                    'device_imei2' => $request->device_imei2,
+                    'branch_id' => $request->branch_id,
+                    'terminal_ID' => $request->terminal,
+                ]);
 
-        $update = Devices::where('device_id', $request->device_id)
-            ->update([
-                'device_imei1' => $request->device_imei1,
-                'device_imei2' => $request->device_imei2,
-                'branch_id' => $request->branch_id,
-                'terminal_ID' => $request->terminal,
-            ]);
-
-        if ($update == true) {
-            $notification = "Device updated successfully!";
-            $color = "success";
-        } else {
-            $notification = "There was a problem trying to update the device!";
+            if ($update) {
+                $notification = "Device updated successfully!";
+                $color = "success";
+            } else {
+                $notification = "There was a problem trying to update the device!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error("Update Device Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            $notification = "Something went wrong, try again later!";
             $color = "danger";
         }
+
         return redirect()->back()->with('notification', $notification)->with('color', $color);
     }
 
     public function storeDevice(Request $request)
     {
-        //updated by Evance Nganyaga
-        if (isset($request->bulk_upload) && $request->hasFile('devices_file')) {
-            //this is a bulk file upload request
-            $devices_file = $request->file('devices_file');
-            //validate the file
-            if ($devices_file->getClientOriginalExtension() != "csv" && $devices_file->getMimeType() != "text/plain") {
-                return redirect()->back()->with(['notification' => 'Invalid file format, please download and use the provided template.', 'color' => 'danger']);
-            }
-            if ($devices_file->getSize() > 2000000) {
-                return redirect()->back()->with(['notification' => 'File is large than 2 MB, please split and upload in portions.', 'color' => 'danger']);
-            }
+        try {
+            //updated by Evance Nganyaga
+            if ($request->bulk_upload && $request->hasFile('devices_file')) {
+                //this is a bulk file upload request
+                $devices_file = $request->file('devices_file');
+                //validate the file
+                if ($devices_file->getClientOriginalExtension() !== "csv" && $devices_file->getMimeType() !== "text/plain") {
+                    return redirect()->back()->with(['notification' => 'Invalid file format, please download and use the provided template.', 'color' => 'danger']);
+                }
+                if ($devices_file->getSize() > 2000000) {
+                    return redirect()->back()->with(['notification' => 'File is large than 2 MB, please split and upload in portions.', 'color' => 'danger']);
+                }
 
-            //loop through the file
-            $c = 0;
-            $insert_count = 0;
-            foreach (file($devices_file) as $line) {
-                // loop with $line for each line of yourfile.txt
-                if ($c == 0) {
-                    //heading
-                    $c++;
-                    continue;
-                } else {
-                    //real data
-                    $data = explode(",", $line);
-                    $terminal_ID = $data[0];
-                    $device_imei1 = $data[1];
-                    $device_imei2 = $data[2];
+                //loop through the file
+                $c = 0;
+                $insert_count = 0;
+                foreach (file($devices_file) as $line) {
+                    // loop with $line for each line of yourfile.txt
+                    if ($c == 0) {
+                        //heading
+                        $c++;
+                        continue;
+                    } else {
+                        //real data
+                        $data = explode(",", $line);
+                        $terminal_ID = $data[0];
+                        $device_imei1 = $data[1];
+                        $device_imei2 = $data[2];
 
-                    //validate the data
-                    if (!isset($request->branch_id)) {
-                        return redirect()->back()->with(['notification' => 'Please assign a branch to devices.', 'color' => 'danger']);
-                    }
-                    if ($device_imei1 == $device_imei2) {
-                        return redirect()->back()->with(['notification' => 'One or more devices has the same imei numbers.', 'color' => 'danger']);
-                    }
+                        //validate the data
+                        if ($request->branch_id) {
+                            return redirect()->back()->with(['notification' => 'Please assign a branch to devices.', 'color' => 'danger']);
+                        }
+                        if ($device_imei1 === $device_imei2) {
+                            return redirect()->back()->with(['notification' => 'One or more devices has the same imei numbers.', 'color' => 'danger']);
+                        }
 
-                    $device_imei = Devices::where('device_imei1', $device_imei1)->orWhere('device_imei2', $device_imei1)->get();
-                    if (count($device_imei) > 0) {
-                        return redirect()->back()->with(['notification' => 'Device with imei ' . $device_imei1 . ', ' . $device_imei2 . ' already exist.', 'color' => 'danger']);
-                    }
-
-                    if ($device_imei2 != "null\r\n") {
-                        $device_imei = Devices::where('device_imei1', $device_imei2)->orWhere('device_imei2', $device_imei2)->get();
+                        $device_imei = Devices::where('device_imei1', $device_imei1)->orWhere('device_imei2', $device_imei1)->get();
                         if (count($device_imei) > 0) {
                             return redirect()->back()->with(['notification' => 'Device with imei ' . $device_imei1 . ', ' . $device_imei2 . ' already exist.', 'color' => 'danger']);
                         }
-                    } else {
-                        $device_imei2 = null;
+
+                        if ($device_imei2 !== "null\r\n") {
+                            $device_imei = Devices::where('device_imei1', $device_imei2)->orWhere('device_imei2', $device_imei2)->get();
+                            if (count($device_imei) > 0) {
+                                return redirect()->back()->with(['notification' => 'Device with imei ' . $device_imei1 . ', ' . $device_imei2 . ' already exist.', 'color' => 'danger']);
+                            }
+                        } else {
+                            $device_imei2 = null;
+                        }
+
+                        $terminal_id = Devices::where('terminal_ID', $terminal_ID)->get();
+                        if (count($terminal_id) > 0) {
+                            return redirect()->back()->with(['notification' => 'One or more devices have the same Terminal ID ' . $terminal_ID . ' already in use', 'color' => 'danger']);
+                        }
+
+                        $device = new Devices();
+                        $device->setConnection('sqlsrv4');
+                        $device->device_imei1 = $device_imei1;
+                        $device->device_imei2 = $device_imei2;
+                        $device->terminal_ID = $terminal_ID;
+                        $device->branch_id = $request['branch_id'];
+                        $device->device_status = 0;
+                        $device->registered_by = auth()->user()->id;
+                        $device->save();
+                        $insert_count++;
                     }
-
-
-                    $terminal_id = Devices::where('terminal_ID', $terminal_ID)->get();
-                    if (count($terminal_id) > 0) {
-                        return redirect()->back()->with(['notification' => 'One or more devices have the same Terminal ID ' . $terminal_ID . ' already in use', 'color' => 'danger']);
-                    }
-
-                    $device = new Devices();
-                    $device->setConnection('sqlsrv4');
-                    $device->device_imei1 = $device_imei1;
-                    $device->device_imei2 = $device_imei2;
-                    $device->terminal_ID = $terminal_ID;
-                    $device->branch_id = $request['branch_id'];
-                    $device->device_status = 0;
-                    $device->registered_by = auth()->user()->id;
-                    $device->save();
-                    $insert_count++;
                 }
+                return redirect()->back()->with(['notification' => $insert_count . ' Device(s) added successfully!', 'color' => 'success']);
             }
-            return redirect()->back()->with(['notification' => $insert_count . ' Device(s) added successfully!', 'color' => 'success']);
+
+            //then this is a normal request
+            $request->validate([
+                'device_imei1' => 'required',
+                'branch_id' => 'required',
+                'terminal' => 'required'
+            ]);
+
+            //Validation imei1 and imei2 should not be the same
+            if ($request->device_imei1 === $request->device_imei2) {
+                return redirect()->back()->with(['notification' => 'Imei Number 1 should not Match Imei Number 2', 'color' => 'danger']);
+            }
+
+            $device_imei = Devices::where('device_imei1', $request->device_imei1)->get();
+
+            if (count($device_imei) > 0) {
+                return redirect()->back()->with(['notification' => 'Device already exists', 'color' => 'danger']);
+            }
+
+            $terminal_id = Devices::where('terminal_ID', $request->terminal)->get();
+
+            if (count($terminal_id) > 0) {
+                return redirect()->back()->with(['notification' => 'Terminal Id already in use', 'color' => 'danger']);
+            }
+
+            //check  to see if there is device imei 2 in the request
+            if ($request->device_imei2) {
+                $imei2 = $request->device_imei2;
+            } else {
+                $imei2 = null;
+            }
+
+            $device = new Devices();
+            $device->setConnection('sqlsrv4');
+            $device->device_imei1 = $request['device_imei1'];
+            $device->device_imei2 = $imei2;
+            $device->terminal_ID = $request['terminal'];
+            $device->branch_id = $request['branch_id'];
+            $device->device_status = 0;
+            $device->registered_by = auth()->user()->id;
+            $device->save();
+
+            return redirect()->back()->with(['notification' => 'Device added successfully', 'color' => 'success']);
+        } catch (\Exception $e) {
+            Log::error("Store Device Exception: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return redirect()->back()->with(['notification' => 'Something went wrong, try again later!', 'color' => 'danger']);
         }
-
-        //then this is a normal request
-        $request->validate([
-            'device_imei1' => 'required',
-            'branch_id' => 'required',
-            'terminal' => 'required'
-        ]);
-
-        //Validation imei1 and imei2 should not be the same
-        if ($request->device_imei1 == $request->device_imei2) {
-            return redirect()->back()->with(['notification' => 'Imei Number 1 should not Match Imei Number 2', 'color' => 'danger']);
-        }
-
-
-        $device_imei = Devices::where('device_imei1', $request->device_imei1)->get();
-
-        if (count($device_imei) > 0) {
-            return redirect()->back()->with(['notification' => 'Device already exists', 'color' => 'danger']);
-        }
-
-        $terminal_id = Devices::where('terminal_ID', $request->terminal)->get();
-
-        if (count($terminal_id) > 0) {
-            return redirect()->back()->with(['notification' => 'Terminal Id already in use', 'color' => 'danger']);
-        }
-
-        //check  to see if there is device imei 2 in the request
-        if (isset($request->device_imei2)) {
-            $imei2 = $request->device_imei2;
-        } else {
-            $imei2 = null;
-        }
-
-        $device = new Devices();
-        $device->setConnection('sqlsrv4');
-        $device->device_imei1 = $request['device_imei1'];
-        $device->device_imei2 = $imei2;
-        $device->terminal_ID = $request['terminal'];
-        $device->branch_id = $request['branch_id'];
-        $device->device_status = 0;
-        $device->registered_by = auth()->user()->id;
-        $device->save();
-
-        return redirect()->back()->with(['notification' => 'Device added successfully', 'color' => 'success']);
     }
 
     public function destroy(User $user)
     {
-        //abort_unless(\Gate::allows('user_delete'), 403);
+        abort_unless(\Gate::allows('user_delete'), 403);
 
-        $user->delete();
-
-        return back();
+        try {
+            $user->delete();
+            return back()->with(['notification' => 'User deleted successfully', 'color' => 'success']);
+        } catch (\Exception $e) {
+            Log::error("User Deletion Exception: " ,['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return back()->with(['notification' => 'Failed to delete user, please try again later!', 'color' => 'danger']);
+        }
     }
 
     /**
@@ -538,11 +570,5 @@ class UsersController extends Controller
             return back()->with(['notification' => 'Something went wrong. Try again later!', 'color' => 'danger']);
         }
 
-    }
-
-    public function massDestroy(MassDestroyUserRequest $request)
-    {
-        User::whereIn('id', request('ids'))->delete();
-        return response(null, 204);
     }
 }
