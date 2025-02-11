@@ -268,7 +268,7 @@ class TransactionController extends Controller
                     // Utility Payments transaction
                     return $this->sendRequest($url . 'AgentTransactions', $payload, self::TEXT_CONTENT_TYPE);
                     break;
-                case Constants::CustomerQueryControlNumberDetails:
+                case Constants::CUSTOMER_QUERY_CTL_DETAILS:
                     $payload = [
                         "controlNumber" => $decodedRequest['controlNumber'],
                         "customerMSIDN" => $decodedRequest['customerMSIDN']
