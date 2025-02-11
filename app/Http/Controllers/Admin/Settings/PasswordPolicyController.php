@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Validator;
 
 class PasswordPolicyController extends Controller
 {
+    public const PASSWORD_REGEX = 'required|integer|min:1';
+
     public function index()
     {
         $policies = PasswordPolicy::query()->get();
@@ -23,11 +25,11 @@ class PasswordPolicyController extends Controller
         $validator = Validator::make($request->all(), [
             'min_length' => 'required|integer|min:8',
             'complexity' => 'required|string|in:strong,medium,weak',
-            'max_attempts' => 'required|integer|min:1',
-            'expiry_period' => 'required|integer|min:1',
+            'max_attempts' => self::PASSWORD_REGEX,
+            'expiry_period' => self::PASSWORD_REGEX,
             'pass_history' => 'required|integer|min:5',
-            'otp_expiry' => 'required|integer|min:1',
-            'otp_attempts' => 'required|integer|min:1',
+            'otp_expiry' => self::PASSWORD_REGEX,
+            'otp_attempts' => self::PASSWORD_REGEX,
             'otp_length' => 'required|integer|min:4|max:8',
         ]);
 
