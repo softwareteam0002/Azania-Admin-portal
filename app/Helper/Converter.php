@@ -32,7 +32,7 @@ class Converter
         return $xmlData->asXML();
     }
 
-    public static function XmlToArray($xmlContent)
+    public static function xmlToArray($xmlContent)
     {
         try {
             // Load XML as an object
@@ -40,14 +40,12 @@ class Converter
 
             // Check if the XML is valid
             if ($xmlObject === false) {
-                throw new \Exception('Failed to parse XML.');
+                throw new \InvalidArgumentException('Failed to parse XML.');
             }
 
             // Convert XML object to JSON, then decode to array
             $json = json_encode($xmlObject);
-            $array = json_decode($json, true);
-
-            return $array;
+            return json_decode($json, true);
         } catch (\Exception $e) {
             // Handle errors (optional: log the error for debugging)
             Log::channel('agency')->error("XML to Array Conversion Error: " . $e->getMessage());
