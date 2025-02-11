@@ -59,8 +59,8 @@
 
     <a class="navbar-brand" href="#">
 
-        <span class="navbar-brand-full"> <img src="{{ asset('public/images/mhb-logo.png') }}" width="100px"
-                                              alt="MHB Logo"></span>
+        <span class="navbar-brand-full"> <img src="{{ asset('public/images/azania-logo.png') }}" width="160px"
+                                              alt="Azania Logo"></span>
         <span class="navbar-brand-minimized">MHB</span>
     </a>
     <button class="navbar-toggler sidebar-toggler d-md-down-none" type="button" data-toggle="sidebar-lg-show">
