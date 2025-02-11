@@ -245,7 +245,7 @@
 }
 
 .menu-background {
-    background: #009fe8;;
+    background: #04adef;;
 }
 
 .menu-font {
@@ -253,9 +253,68 @@
 }
 
 .mhb-primary {
-    background-color: #009fe8;
+    background-color: #04adef;
 }
 
 .mhb-secondary {
     background-color: #e4792f;
+}
+
+.login-bg {
+    background-image: url('https://uat.ubx.co.tz:8888/azaniaportal/public/images/azania-background.jpeg');
+    background-size: cover;
+    width: 100%;
+    height: 100vh
+}
+
+.login-cont {
+    position: absolute;
+    top: 100px;
+    left: 31%;
+    width: 45rem;
+    height: 35rem;
+    overflow: hidden;
+}
+
+.otp-container {
+    display: flex !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    margin-top: 10px !important;
+}
+
+.otp-box {
+    width: 50px !important;
+    height: 50px !important;
+    font-size: 24px !important;
+    text-align: center !important;
+    border: 2px solid #01b0f5 !important;
+    border-radius: 8px !important;
+    outline: none !important;
+    transition: all 0.3s ease-in-out !important;
+}
+
+.otp-box:focus {
+    border-color: #01b0f5 !important;
+    box-shadow: 0px 0px 8px rgba(0, 91, 187, 0.5) !important;
+}
+
+.otp-box::-webkit-inner-spin-button,
+.otp-box::-webkit-outer-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+}
+
+.otp-box:disabled {
+    background-color: #f5f5f5 !important;
+    cursor: not-allowed !important;
+}
+
+.set-cont {
+    position: absolute;
+    top: 200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 1000px;
 }
