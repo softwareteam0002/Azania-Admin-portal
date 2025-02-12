@@ -29,7 +29,7 @@ class TwoFactorAuth extends Controller
 
         // Return error if validation fails
         if ($validate->fails()) {
-            return redirect()->back()->with(['message' => $validate->errors()->first(), 'color' => 'danger']);
+            return redirect()->back()->with(['notification' => $validate->errors()->first(), 'color' => 'danger']);
         }
 
         // Get the authenticated user's ID and cache key for OTP
@@ -41,7 +41,7 @@ class TwoFactorAuth extends Controller
 
         // If OTP is not found in the cache, notify that it has expired
         if (!$cachedOtp) {
-            return redirect()->back()->with(['message' => 'OTP has expired. Please request a new OTP.', 'color' => 'danger']);
+            return redirect()->back()->with(['notification' => 'OTP has expired. Please request a new OTP.', 'color' => 'danger']);
         }
 
         // Convert the OTP array to a string for comparison
@@ -49,7 +49,7 @@ class TwoFactorAuth extends Controller
 
         // If OTP doesn't match
         if ($cachedOtp != $otpString) {
-            return redirect()->back()->with(['message' => 'Invalid OTP. Please try again.', 'color' => 'danger']);
+            return redirect()->back()->with(['notification' => 'Invalid OTP. Please try again.', 'color' => 'danger']);
         }
 
         // OTP is valid - handle successful verification
@@ -65,7 +65,7 @@ class TwoFactorAuth extends Controller
         }
 
         // Redirect the user to the home page or any other route
-        return redirect()->route('home')->with(['message' => 'OTP verified successfully!', 'color' => 'success']);
+        return redirect()->route('home')->with(['notification' => 'OTP verified successfully!', 'color' => 'success']);
     }
 
     public function resendOtp(Request $request)
@@ -82,7 +82,7 @@ class TwoFactorAuth extends Controller
 
             // Create a message with remaining time
             return back()->with([
-                'message' => "Too many OTP requests. Please wait {$minutes} minute(s) and {$remainingSeconds} second(s) before trying again.",
+                'notification' => "Too many OTP requests. Please wait {$minutes} minute(s) and {$remainingSeconds} second(s) before trying again.",
                 'color' => 'danger'
             ]);
         }
@@ -104,7 +104,7 @@ class TwoFactorAuth extends Controller
 
         // Queue the email notification
         Mail::to($email)->queue(new EmailNotification($message));
-        return back()->with(['message' => 'OTP resent successfully!', 'color' => 'success']);
+        return back()->with(['notification' => 'OTP resent successfully!', 'color' => 'success']);
     }
 
     protected function cacheOtp($userId, $otp): void
