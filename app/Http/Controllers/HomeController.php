@@ -6,6 +6,7 @@ use App\Devices;
 use App\TblTransaction;
 use App\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class HomeController extends Controller
 {
@@ -37,15 +38,23 @@ class HomeController extends Controller
 
     public function getUserCount(): \Illuminate\Http\JsonResponse
     {
-        $devices = Devices::count();
-        $agents = DB::connection('sqlsrv4')->table('tbl_agency_banking_agents')->count();
-        $users = User::count();
+        try {
+            $devices = Devices::count();
+            $agents = DB::connection('sqlsrv4')->table('tbl_agency_banking_agents')->count();
+            $users = User::count();
 
-        return response()->json([
-            'users' => $users,
-            'agents' => $agents,
-            'devices' => $devices,
-        ]);
+            return response()->json([
+                'users' => $users,
+                'agents' => $agents,
+                'devices' => $devices,
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Error fetching user count: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return response()->json([
+                'error' => 'An error occurred while fetching user count.',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
 }
