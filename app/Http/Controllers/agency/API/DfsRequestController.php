@@ -5,7 +5,6 @@ namespace App\Http\Controllers\agency\API;
 use App\Http\Controllers\Controller;
 use App\Jobs\BankRequests;
 use Illuminate\Http\Request;
-
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Validator;
@@ -15,8 +14,8 @@ class DfsRequestController extends Controller
 
     public function dfsRequest(Request $request)
     {
-		$time = 5;
-       $validator = Validator::make($request->all(), [
+        $time = 5;
+        $validator = Validator::make($request->all(), [
             'details' => 'required',
         ]);
 
