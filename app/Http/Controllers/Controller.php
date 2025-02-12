@@ -9,7 +9,6 @@ use Illuminate\Foundation\Validation\ValidatesRequests;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 
 class Controller extends BaseController
 {
@@ -18,38 +17,38 @@ class Controller extends BaseController
 
     function encrypt($data, $key)
     {
-        $iv_len = 12;
-        $iv = openssl_random_pseudo_bytes($iv_len);
-        $salt_len = 16;
-        $salt = openssl_random_pseudo_bytes($salt_len);
-        $tag = "";
+        try {
+            $iv_len = 12;
+            $iv = openssl_random_pseudo_bytes($iv_len);
+            $salt_len = 16;
+            $salt = openssl_random_pseudo_bytes($salt_len);
+            $tag = "";
 
-        // Generate key using PBKDF2
-        $keyGenerated = hash_pbkdf2('sha1', $key, $salt, 10000, 128, true);
+            // Generate key using PBKDF2
+            $keyGenerated = hash_pbkdf2('sha1', $key, $salt, 10000, 128, true);
 
-        // Encrypt using aes-128-gcm
-        $encrypted = openssl_encrypt(
-            $data,
-            "aes-128-gcm",
-            $keyGenerated,
-            OPENSSL_RAW_DATA,
-            $iv,
-            $tag,
-            "",
-            16
-        );
+            // Encrypt using aes-128-gcm
+            $encrypted = openssl_encrypt(
+                $data,
+                "aes-128-gcm",
+                $keyGenerated,
+                OPENSSL_RAW_DATA,
+                $iv,
+                $tag,
+                "",
+                16
+            );
 
-        // Combine IV, salt, tag, and ciphertext
-        $encodedData = $iv . $salt . $encrypted . $tag;
+            // Combine IV, salt, tag, and ciphertext
+            $encodedData = $iv . $salt . $encrypted . $tag;
 
-        // Base64 encode the combined data
-        $base64EncodedData = base64_encode($encodedData);
-        $base64EncodedData = str_replace("\\\\", "", $base64EncodedData);
-        /* Log::error("ENC: " . $base64EncodedData);
-          Log::error("KEY2: " . $key);
-        $result = $this->decrypt($base64EncodedData,$key);
-           Log::error("Result: " . $result);*/
-        return $base64EncodedData;
+            // Base64 encode the combined data
+            $base64EncodedData = base64_encode($encodedData);
+            return str_replace("\\\\", "", $base64EncodedData);
+        } catch (\Exception $e) {
+            Log::error("ENCRYPTION-ERROR: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return null;
+        }
     }
 
 
@@ -87,8 +86,8 @@ class Controller extends BaseController
 
             return $decrypted;
         } catch (\Exception $e) {
-            Log::error("FAILED-TO-DECRYPT: " . json_encode($e->getMessage()));
-            return $e->getMessage();
+            Log::error("DECRYPTION-ERROR: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return null;
         }
     }
 
@@ -108,14 +107,6 @@ class Controller extends BaseController
         return response()->json(["data" => $signedData]);
     }
 
-    public function validateRequest($data)
-    {
-        $validator = Validator::make($data, [
-            'type' => 'sometimes|regex:/^[a-zA-Z\s]+$/|max:20',
-            'amount' => 'sometimes|regex:/^\d+(\.\d{1,2})?$/',
-        ]);
-    }
-
     public function auditLog($user, $action, $module, $reason = null, $source = null): void
     {
         try {
@@ -130,7 +121,7 @@ class Controller extends BaseController
                 ]
             );
         } catch (\Exception $e) {
-            Log::error("AUDIT-TRAIL-EXCEPTION: " . json_encode($e->getMessage()));
+            Log::error("AUDIT-TRAIL-EXCEPTION: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
         }
 
     }
