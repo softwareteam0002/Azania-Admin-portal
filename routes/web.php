@@ -40,17 +40,14 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'namespace' => 'Admin', 'mi
     Route::post('device/store', 'UsersController@storeDevice');
     Route::get('devices/{id}', 'UsersController@editDevice');
     Route::put('device/update', 'UsersController@updateDevice');
-    //TODO: To be changed to post request
     Route::post('activate', 'UsersController@activateDevice');
     Route::post('deactivate', 'UsersController@deactivateDevice');
-
 
     Route::post('permissions', 'PermissionsController@store');
     Route::get('permissions/{id}', 'PermissionsController@edit');
     Route::post('permissions/edit', 'PermissionsController@update');
     Route::post('permissions/delete', 'PermissionsController@destroy');
-
-
+    
     Route::post('roles', 'RolesController@store');
     Route::post('roles/delete', 'RolesController@destroy');
     Route::get('roles/{id}', 'RolesController@edit');
@@ -149,7 +146,6 @@ Route::group(['prefix' => 'agency', 'as' => 'agency.', 'namespace' => 'agency', 
     Route::post('agentcommissions/generate', 'AgentCommisionController@generateCommssionBatches');
     Route::post('agentcommissions/batch', 'AgentCommisionController@commisionBatchOperations');
     Route::get('agentcommissions/batch/{id}', 'AgentCommisionController@indexCommssionBatch');
-    //Route::post('agentcommissions/{id}', 'AgentCommisionController@indexCommssionBatch');
 
 
     //added by Evance Nganyagaga
