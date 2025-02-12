@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Agency;
+namespace App\Http\Controllers\agency;
 
 use App\AbDistributionParties;
 use App\AbStatus;
@@ -99,14 +99,6 @@ class AgentController extends Controller
             $this->auditLog(Auth::user()->getAuthIdentifier(), 'Update Agent', 'Agency Banking', 'Exception Occurred', $request->ip());
             return redirect()->back()->with(['notification' => $e, 'color' => "danger"]);
         }
-    }
-
-    public function afterInsertion($notification, $color)
-    {
-        $languages = DB::connection("sqlsrv4")->table('tbl_agency_banking_agent_language')->get();
-        $statuses = AbStatus::where('tbl_status_id', '<', 3)->get();
-        $branches = DB::connection("sqlsrv4")->table('tbl_agency_branches')->get();
-        return view("agency.agent.create", compact('languages', 'statuses', 'branches', 'notification', 'color'));
     }
 
     public function agentResetPIN(Request $r)
@@ -523,7 +515,6 @@ class AgentController extends Controller
         $connecteddevice = Devices::where('device_id', $device->device_id)->first();
         $tradingacs = TblABBankAccounts::where('agent_id', $device->agent_id)->where('account_type_id', '1')->where('account_status', '1')->get();
         $commisionacs = TblABBankAccounts::where('agent_id', $device->agent_id)->where('account_type_id', '2')->where('account_status', '1')->get();
-        $agentdevices = TblAgentDevice::where('agent_id', $device->agent_id)->get();
 
         return view('agency.devices.approve_device', compact('device', 'agent', 'approvedevices', 'unassigneddevices', 'tradingacs', 'commisionacs', 'connecteddevice'));
     }
@@ -898,82 +889,89 @@ class AgentController extends Controller
 
     public function updateDeviceStatus(Request $request)
     {
-        //update the device status based on the status field.
-        $s = $request->status;
-        $agent_device_id = $request->agent_device_id;
-        switch ($s) {
-            case 1:
-                //activate device
-                $query = TblAgentDevice::where('id', $agent_device_id)
-                    ->update([
-                        'status' => 1
-                    ]);
-                $notification = "Device activated successfully!";
-                $color = "success";
-                break;
-
-            case 2:
-                //de activate device
-                $query = TblAgentDevice::where('id', $agent_device_id)
-                    ->update([
-                        'status' => 2
-                    ]);
-                $notification = "Device de activated successfully!";
-                $color = "success";
-                break;
-
-            case 3:
-                //block device
-                $query = TblAgentDevice::where('id', $agent_device_id)
-                    ->update([
-                        'status' => 3
-                    ]);
-                $notification = "Device blocked successfully!";
-                $color = "success";
-                $log = new Helper();
-                $log->auditTrail("Blocked Device", "AB", $notification, 'agency/devices', Auth::user()->getAuthIdentifier());
-                break;
-
-            case 4:
-                //suspend device
-                $query = TblAgentDevice::where('id', $agent_device_id)
-                    ->update([
-                        'status' => 4
-                    ]);
-                $notification = "Device suspended successfully!";
-                $color = "success";
-                break;
-
-            case 0:
-                //un assign device
-                $query = TblAgentDevice::where('id', $agent_device_id)->delete();
-                if ($query) {
-                    //remove the status of the device
-                    $old_device = Devices::where('device_id', $request['device_id'])->first();
-                    $old_device->device_status = 0;
-                    $old_device->trading_account_id = null;
-                    $old_device->commision_account_id = null;
-                    $old_device->save();
-                    //remove the device from operators
-                    $operator_update = Operator::where('device_id', $request->device_id)
+        try {
+            //update the device status based on the status field.
+            $s = $request->status;
+            $agent_device_id = $request->agent_device_id;
+            switch ($s) {
+                case 1:
+                    //activate device
+                    $query = TblAgentDevice::where('id', $agent_device_id)
                         ->update([
-                            'operator_status' => 4
+                            'status' => 1
                         ]);
-                    if ($operator_update) {
-                        //add code here :D
-                    } else {
-                        //add code here
+                    $notification = "Device activated successfully!";
+                    $color = "success";
+                    break;
+
+                case 2:
+                    //de activate device
+                    $query = TblAgentDevice::where('id', $agent_device_id)
+                        ->update([
+                            'status' => 2
+                        ]);
+                    $notification = "Device de activated successfully!";
+                    $color = "success";
+                    break;
+
+                case 3:
+                    //block device
+                    $query = TblAgentDevice::where('id', $agent_device_id)
+                        ->update([
+                            'status' => 3
+                        ]);
+                    $notification = "Device blocked successfully!";
+                    $color = "success";
+                    $log = new Helper();
+                    $log->auditTrail("Blocked Device", "AB", $notification, 'agency/devices', Auth::user()->getAuthIdentifier());
+                    break;
+
+                case 4:
+                    //suspend device
+                    $query = TblAgentDevice::where('id', $agent_device_id)
+                        ->update([
+                            'status' => 4
+                        ]);
+                    $notification = "Device suspended successfully!";
+                    $color = "success";
+                    break;
+
+                case 0:
+                    //un assign device
+                    $query = TblAgentDevice::where('id', $agent_device_id)->delete();
+                    if ($query) {
+                        //remove the status of the device
+                        $old_device = Devices::where('device_id', $request['device_id'])->first();
+                        $old_device->device_status = 0;
+                        $old_device->trading_account_id = null;
+                        $old_device->commision_account_id = null;
+                        $old_device->save();
+                        //remove the device from operators
+                        $operator_update = Operator::where('device_id', $request->device_id)
+                            ->update([
+                                'operator_status' => 4
+                            ]);
+                        if ($operator_update) {
+                            //add code here :D
+                        } else {
+                            //add code here
+                        }
                     }
-                }
-                $notification = "Device un assigned successfully!";
-                $color = "success";
-                break;
-        }
-        if ($query == TRUE) {
-            //query has been executed successfully
-            return redirect()->back()->with(['notification' => $notification, 'color' => $color]);
-        } else {
+                    $notification = "Device un assigned successfully!";
+                    $color = "success";
+                    break;
+                default:
+                    $query = false;
+            }
+            if ($query) {
+                //query has been executed successfully
+                return redirect()->back()->with(['notification' => $notification, 'color' => $color]);
+            }
+
             return redirect()->back()->with(['notification' => "Device status update failed, please try again.", 'color' => "danger"]);
+        } catch (\Exception $e) {
+            Log::error("DEVICE-UPDATE-STATUS-EXCEPTION: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return redirect()->back()->with(['notification' => 'Something went wrong, Try again later!', 'color' => "danger"]);
         }
     }
 
@@ -990,7 +988,6 @@ class AgentController extends Controller
         $agent_rate = $request->agent_rate;
         $third_party_rate = $request->third_party_rate;
         $rate_sum = $bank_rate + $agent_rate + $third_party_rate;
-
 
         //validate the rate distribution
         if ($rate_sum > 100) {
@@ -1015,67 +1012,76 @@ class AgentController extends Controller
             }
         }
 
+        try {
+            $commission = new CommissionDistribution();
+            $commission->service_name_id = $request['service'];
 
-        $commission = new CommissionDistribution();
-        $commission->service_name_id = $request['service'];
+            $commission->bank_rate_value = $bank_rate;
+            $commission->agent_rate_value = $agent_rate;
+            $commission->third_parties = $third_party_rate;
+            $commission->initiator_id = $uid;
+            $commission->approver_id = 0;
+            $commission->isWaitingApproval = 1;
 
-        $commission->bank_rate_value = $bank_rate;
-        $commission->agent_rate_value = $agent_rate;
-        $commission->third_parties = $third_party_rate;
-        $commission->initiator_id = $uid;
-        $commission->approver_id = 0;
-        $commission->isWaitingApproval = 1;
-
-        $commission->save();
-        $log = new Helper();
-        $log->auditTrail("Added Commission", "AB", 'Commission added successfully', 'agency/agentcommissions', Auth::user()->getAuthIdentifier());
-        return redirect()->back()->with(['notification' => 'Commission added successfully', 'color' => 'success']);
+            $commission->save();
+            $log = new Helper();
+            $log->auditTrail("Added Commission", "AB", 'Commission added successfully', 'agency/agentcommissions', Auth::user()->getAuthIdentifier());
+            return redirect()->back()->with(['notification' => 'Commission added successfully', 'color' => 'success']);
+        } catch (\Exception $ex) {
+            Log::error("COMMISSION-STORE-EXCEPTION: ", ['message' => $ex->getMessage(), 'line' => $ex->getLine(), 'file' => $ex->getFile()]);
+            return redirect()->back()->with(['notification' => 'Failed to add commission. Error: ' . $ex->getMessage(), 'color' => 'danger']);
+        }
     }
 
 
     public function editCommission($id)
     {
-        $services = BankingAgentService::all();
         $commission = CommissionDistribution::where('commision_id', $id)->first();
-
         return view('agency.commissions.edit', compact('commission'));
     }
 
     public function updateCommission(Request $request)
     {
-        $uid = Auth::user()->id;
-        //add the three rate values
-        $bank_rate = $request->bank_rate;
-        $agent_rate = $request->agent_rate;
-        $third_party_rate = $request->third_party_rate;
-        $rate_sum = $bank_rate + $agent_rate + $third_party_rate;
+        try {
+            //add the three rate values
+            $bank_rate = $request->bank_rate;
+            $agent_rate = $request->agent_rate;
+            $third_party_rate = $request->third_party_rate;
+            $rate_sum = $bank_rate + $agent_rate + $third_party_rate;
 
-        //validate the rate distribution
-        if ($rate_sum > 100) {
-            //the rate has exceeded 100 %
-            return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not exceed 100%.', 'color' => 'danger']);
-        } else if ($rate_sum <= 0) {
-            //there is no rate less than 0
-            return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not be 0%.', 'color' => 'danger']);
-        } else if ($rate_sum < 100) {
-            //total rate must be 100%
-            return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not be less than 100%.', 'color' => 'danger']);
-        }
+            //validate the rate distribution
+            if ($rate_sum > 100) {
+                //the rate has exceeded 100 %
+                return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not exceed 100%.', 'color' => 'danger']);
+            }
 
+            if ($rate_sum <= 0) {
+                //there is no rate less than 0
+                return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not be 0%.', 'color' => 'danger']);
+            }
 
-        $commission = CommissionDistribution::where('commision_id', $request->id)
-            ->update([
-                'bank_rate_value' => $bank_rate,
-                'agent_rate_value' => $agent_rate,
-                'third_parties' => $third_party_rate,
-                'isWaitingApproval' => 1,
-                'approver_id' => 0
-            ]);
+            if ($rate_sum < 100) {
+                //total rate must be 100%
+                return redirect()->back()->with(['notification' => 'The sum of the distribution rate can not be less than 100%.', 'color' => 'danger']);
+            }
 
-        if ($commission == true) {
-            return redirect()->back()->with(['notification' => 'Commission distribution updated successfully', 'color' => 'success']);
-        } else {
-            return redirect()->back()->with(['notification' => 'Sorry there was a problem trying to updated this commission distribution.', 'color' => 'danger']);
+            $commission = CommissionDistribution::where('commision_id', $request->id)
+                ->update([
+                    'bank_rate_value' => $bank_rate,
+                    'agent_rate_value' => $agent_rate,
+                    'third_parties' => $third_party_rate,
+                    'isWaitingApproval' => 1,
+                    'approver_id' => 0
+                ]);
+
+            if ($commission) {
+                return redirect()->back()->with(['notification' => 'Commission distribution updated successfully', 'color' => 'success']);
+            } else {
+                return redirect()->back()->with(['notification' => 'Sorry there was a problem trying to updated this commission distribution.', 'color' => 'danger']);
+            }
+        } catch (\Exception $ex) {
+            Log::error("UPDATE-COMMISSION-EXCEPTION: ", ['message' => $ex->getMessage(), 'line' => $ex->getLine(), 'file' => $ex->getFile()]);
+            return redirect()->back()->with(['notification' => 'Something went wrong while updating the commission. Error: ' . $ex->getMessage(), 'color' => 'danger']);
         }
     }
 
@@ -1140,44 +1146,58 @@ class AgentController extends Controller
 
     public function reverseTransaction(Request $request)
     {
-        $url = "http://172.29.1.108:18984/mkombozi/request/process/ag";
-        $serviceType = "REVERSAL";
-        $client = new Client;
-        $account = $request->serviceAccountId;
-        $infoRequest = [
-            "serviceType" => $serviceType,
-            "serviceAccountId" => $account,
-            "mobile" => $request->mobile,
-            "charge" => $request->charge,
-            "transactionId" => $request->transactionId,
-            "channelType" => "AB",
-            "accountID" => $request->accountID,
-            "trxAmount" => $request->trxAmount,
-            "trxnDescription" => $request->trxnDescription,
-            "isCard" => "false",
-            "pinBlock" => "",
-            "track2Data" => "",
-            "destinationAccountId" => ""
-        ];
-        $res = $client->request('POST', $url, [
-            'json' => $infoRequest
-        ]);
+        try {
+            $url = "http://172.29.1.108:18984/mkombozi/request/process/ag";
+            $serviceType = "REVERSAL";
+            $client = new Client;
+            $account = $request->serviceAccountId;
+            $infoRequest = [
+                "serviceType" => $serviceType,
+                "serviceAccountId" => $account,
+                "mobile" => $request->mobile,
+                "charge" => $request->charge,
+                "transactionId" => $request->transactionId,
+                "channelType" => "AB",
+                "accountID" => $request->accountID,
+                "trxAmount" => $request->trxAmount,
+                "trxnDescription" => $request->trxnDescription,
+                "isCard" => "false",
+                "pinBlock" => "",
+                "track2Data" => "",
+                "destinationAccountId" => ""
+            ];
 
-        $accountInfo = $res->getBody();
-        $accountDetail = json_decode($accountInfo);
-        $responseCode = $accountDetail->responseCode;
-        $responseMessage = $accountDetail->responseMessage;
-        $transactionTimestamp = $accountDetail->transactionTimestamp;
-        $transactionId = $accountDetail->transactionId;
-        if ($responseMessage == "SUCCCESS") {
-            $responseMessage = "Transaction with ID " . $transactionId . " succesfully reversed";
+            $res = $client->request('POST', $url, [
+                'json' => $infoRequest
+            ]);
+
+            $accountInfo = $res->getBody();
+            $accountDetail = json_decode($accountInfo);
+            $responseCode = $accountDetail->responseCode;
+            $responseMessage = $accountDetail->responseMessage;
+            $transactionTimestamp = $accountDetail->transactionTimestamp;
+            $transactionId = $accountDetail->transactionId;
+
+            if ($responseMessage == "SUCCCESS") {
+                $responseMessage = "Transaction with ID " . $transactionId . " succesfully reversed";
+            }
+
+            session()->put('responseCode', $responseCode);
+            session()->put('message', $responseMessage);
+            session()->put('transactionTimestamp', $transactionTimestamp);
+            session()->put('transactionId', $transactionId);
+            return redirect()->back();
+        } catch (\Exception $ex) {
+            Log::error("TRANSACTION-REVERSAL-EXCEPTION: ", [
+                'message' => $ex->getMessage(),
+                'line' => $ex->getLine(),
+                'file' => $ex->getFile()
+            ]);
+            return redirect()->back()->with([
+                'notification' => 'Failed to reverse transaction. Error: ' . $ex->getMessage(),
+                'color' => 'danger'
+            ]);
         }
-        session()->put('responseCode', $responseCode);
-        session()->put('message', $responseMessage);
-        session()->put('transactionTimestamp', $transactionTimestamp);
-        session()->put('transactionId', $transactionId);
-        return redirect()->back();
-
     }
 
 
@@ -1199,29 +1219,26 @@ class AgentController extends Controller
 
     public function updateAccountService(Request $request)
     {
-
         $request->validate([
             'id' => 'required'
         ]);
 
+        try {
+            $account = BankServiceAccount::where('bank_account_id', $request->id)
+                ->update([
+                    'agency_expenses_deposit' => $request->agency_expenses_deposit,
+                ]);
 
-        $account = BankServiceAccount::where('bank_account_id', $request->id)
-            ->update([
-                'agency_expenses_deposit' => $request->agency_expenses_deposit,
+            if ($account) {
+                $log = new Helper();
+                $log->auditTrail("Updated Service Account", "AB", 'Added Service Account', 'agency/account/service', Auth::user()->getAuthIdentifier());
+                return redirect('/agency/account/service')->with(['notification' => 'Service Account updated successfully!', 'color' => 'success']);
+            }
 
-                /* 'colection_account' => $request->colection_account,
-                 'disbursement_account' => $request->disbursement_account,
-                 'agency_commision_account' => $request->agency_commision_account,
-                 'agency_payable_commision_account' => $request->agency_payable_commision_account,
-                 'agency_expenses_deposit' => $request->agency_expenses_deposit,
-                 'agency_deposit_commision_account' => $request->agency_deposit_commision_account*/
-            ]);
-        if ($account) {
-            $log = new Helper();
-            $log->auditTrail("Updated Service Account", "AB", 'Added Service Account', 'agency/account/service', Auth::user()->getAuthIdentifier());
-            return redirect('https://admin.acbtz.com:6003/agency/account/service')->with(['notification' => 'Service Account updated successfully!', 'color' => 'success']);
-        } else {
-            return redirect()->back()->with(['notification' => 'Service Account updated un successfully!', 'color' => 'danger']);
+            return redirect()->back()->with(['notification' => 'Service Account updated unsuccessfully!', 'color' => 'danger']);
+        } catch (\Exception $exception) {
+            Log::error("UPDATE-ACCOUNT-SERVICE-EXCEPTION: ", ['message' => $exception->getMessage(), 'line' => $exception->getLine(), 'file' => $exception->getFile()]);
+            return redirect()->back()->with(['notification' => 'An error occurred while updating the Service Account.', 'color' => 'danger']);
         }
     }
 
@@ -1232,13 +1249,18 @@ class AgentController extends Controller
 
     public function editAccountService(Request $request, $id)
     {
-        $account = BankServiceAccount::on('sqlsrv4')->find($id);
-        if ($account) {
-            $account->bank_account = $request['account'];
-            $account->save();
-            return redirect()->back()->with(['notification' => 'Account successfully changed', 'color' => 'success', 'account' => $account->bank_account]);
+        try {
+            $account = BankServiceAccount::on('sqlsrv4')->find($id);
+            if ($account) {
+                $account->bank_account = $request['account'];
+                $account->save();
+                return redirect()->back()->with(['notification' => 'Account successfully changed', 'color' => 'success', 'account' => $account->bank_account]);
+            }
+            return redirect()->back()->with(['notification' => 'Account does not exist', 'color' => 'danger']);
+        } catch (\Exception $e) {
+            Log::error("EDIT-ACCOUNT-SERVICE-EXCEPTION: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return redirect()->back()->with(['notification' => 'An error occurred while editing the account. Please try again later.', 'color' => 'danger']);
         }
-        return redirect()->back()->with(['notification' => 'Account does not exist', 'color' => 'danger']);
     }
 
     public function editCommissionView($id, $service_id, $name, $value)
@@ -1372,30 +1394,37 @@ class AgentController extends Controller
             'account_type_id' => 'required'
         ]);
 
-        //Validate account number to be unique
-        $account_number = TblABInstitutionAccounts::where('account_number', $request->account_number)
-            ->where('account_type_id', $request->account_type_id)
-            ->get();
+        try {
+            //Validate account number to be unique
+            $account_number = TblABInstitutionAccounts::where('account_number', $request->account_number)
+                ->where('account_type_id', $request->account_type_id)
+                ->get();
 
-        if (count($account_number) > 0) {
-            $notification = "Account already exist!";
-            $color = "danger";
-            //change redirect url by James
-            return redirect('agency/institution_accounts')->with('notification', $notification)->with('color', $color);
+            if (count($account_number) > 0) {
+                $notification = "Account already exist!";
+                $color = "danger";
+                //change redirect url by James
+                return redirect('agency/institution_accounts')->with('notification', $notification)->with('color', $color);
+            }
+
+            $account = new TblABInstitutionAccounts();
+
+            $account->account_number = $request->account_number;
+            $account->account_type_id = $request->account_type_id;
+            $account->initiator_id = $uid;
+            $account->save();
+
+            $log = new Helper();
+            $log->auditTrail("Added new Account", "AB", 'Added Account', 'agency/institution_accounts', Auth::user()->getAuthIdentifier());
+            return redirect()->back()->with(['notification' => 'Account added successfully!', 'color' => 'success']);
+        } catch (\Exception $e) {
+            Log::error("STORE-INSTITUTION-ACCOUNT-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->back()->with(['notification' => 'An error occurred while adding the account. Please try again later.', 'color' => 'danger']);
         }
-
-        //$this->verifyAccount($request);
-
-        $account = new TblABInstitutionAccounts();
-
-        $account->account_number = $request->account_number;
-        $account->account_type_id = $request->account_type_id;
-        $account->initiator_id = $uid;
-        $account->save();
-
-        $log = new Helper();
-        $log->auditTrail("Added new Account", "AB", 'Added Account', 'agency/institution_accounts', Auth::user()->getAuthIdentifier());
-        return redirect()->back()->with(['notification' => 'Account added successfully!', 'color' => 'success']);
     }
 
     public function approveInstitutionAccount(Request $r)
@@ -1403,25 +1432,32 @@ class AgentController extends Controller
         $uid = Auth::user()->id;
         $account_id = $r->account_id;
         $op = $r->op;
-        if ($op == 1) {
+        if ($op === 1) {
             //approve
-            $dual_status = 1;
             $notification = "Institution account approved successfully!";
         } else {
             //disapprove
-            $dual_status = 2;
             $notification = "Institution account approved unsuccessfully!";
         }
 
-        $approve = TblABInstitutionAccounts::where('id', $account_id)
-            ->update([
-                'approver_id' => $uid,
-            ]);
+        try {
+            $approve = TblABInstitutionAccounts::where('id', $account_id)
+                ->update([
+                    'approver_id' => $uid,
+                ]);
 
-        if ($approve == true) {
-            return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
-        } else {
+            if ($approve) {
+                return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
+            }
+
             return redirect()->back()->with(['notification' => 'Institution Account approved/disapproved unsuccessfully!', 'color' => 'danger']);
+        } catch (\Exception $e) {
+            Log::error("APPROVE-INSTITUTION-ACCOUNT-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->back()->with(['notification' => 'An error occurred while approving the institution account. Please try again later.', 'color' => 'danger']);
         }
     }
 
@@ -1438,26 +1474,34 @@ class AgentController extends Controller
 
     public function updateInstitutionAccount(Request $request)
     {
-        $uid = Auth::user()->id;
         $request->validate([
             'account_number' => 'required',
             'account_type_id' => 'required',
             'id' => 'required'
         ]);
 
-        $account = TblABInstitutionAccounts::where('id', $request->id)
-            ->update([
-                'account_number' => $request->account_number,
-                'account_type_id' => $request->account_type_id,
-                'approver_id' => null
-            ]);
+        try {
+            $account = TblABInstitutionAccounts::where('id', $request->id)
+                ->update([
+                    'account_number' => $request->account_number,
+                    'account_type_id' => $request->account_type_id,
+                    'approver_id' => null
+                ]);
 
-        if ($account) {
-            $log = new Helper();
-            $log->auditTrail("Updated Account", "AB", 'Account updated successfully!', 'agency/institutionaccounts/edit/' . $request->id, Auth::user()->getAuthIdentifier());
-            return redirect('agency/institutionaccounts/edit/' . $request->id)->with(['notification' => 'Account updated successfully!', 'color' => 'success']);
-        } else {
+            if ($account) {
+                $log = new Helper();
+                $log->auditTrail("Updated Account", "AB", 'Account updated successfully!', 'agency/institutionaccounts/edit/' . $request->id, Auth::user()->getAuthIdentifier());
+                return redirect('agency/institutionaccounts/edit/' . $request->id)->with(['notification' => 'Account updated successfully!', 'color' => 'success']);
+            }
+
             return redirect('agency/institutionaccounts/edit/' . $request->id)->with(['notification' => 'Account updated un successfully!', 'color' => 'danger']);
+        } catch (\Exception $e) {
+            Log::error("UPDATE-INSTITUTION-ACCOUNT-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect('agency/institutionaccounts/edit/' . $request->id)->with(['notification' => 'An error occurred while updating the account. Please try again later.', 'color' => 'danger']);
         }
     }
 
@@ -1467,7 +1511,7 @@ class AgentController extends Controller
         $uid = Auth::user()->id;
         $account_id = $r->account_id;
         $op = $r->op;
-        if ($op == 1) {
+        if ($op === 1) {
             //approve
             $dual_status = 1;
             $notification = "Agent account approved successfully!";
