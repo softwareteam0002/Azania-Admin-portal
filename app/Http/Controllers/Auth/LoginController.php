@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Validator;
 
 class LoginController extends Controller
 {
@@ -64,7 +65,11 @@ class LoginController extends Controller
      */
     public function login(Request $request)
     {
-        $this->validateLogin($request);
+        $error = $this->validateLogin($request);
+
+        if ($error) {
+            return redirect()->back()->with(['notification' => $error, 'color' => 'danger']);
+        }
 
         $policy = $this->checkPasswordPolicy();
         $user = $this->checkUser($request->email);
@@ -73,18 +78,11 @@ class LoginController extends Controller
         if ($this->hasTooManyLoginAttempts($user->id, $policy)) {
             $user->status = 1;
             $user->save();
-
-            return redirect()->back()
-                ->withErrors([
-                    'error' => 'Maximum login attempts exceeded. Account is suspended.',
-                ]);
+            return redirect()->back()->with(['notification' => 'Maximum login attempts exceeded. Account is suspended.', 'color' => 'danger']);
         }
 
-        if ($user->status != 0) {
-            return redirect()->back()
-                ->withErrors([
-                    'error' => 'Account is Inactive. Please contact administrator.',
-                ]);
+        if ($user->status !== '0') {
+            return redirect()->back()->with(['notification' => 'Account is Inactive. Please contact administrator.', 'color' => 'danger']);
         }
 
         // If login attempt is successful
@@ -113,10 +111,7 @@ class LoginController extends Controller
         // Increment login attempts and return back with a generalized error message
         $this->incrementLoginAttempts($user->id);
 
-        return redirect()->back()
-            ->withErrors([
-                'error' => 'Incorrect email, password, or captcha. Please try again.',
-            ]);
+        return redirect()->back()->with(['notification' => 'Incorrect credentials or captcha. Please try again!', 'color' => 'danger']);
     }
 
     protected function incrementLoginAttempts($id)
@@ -179,17 +174,22 @@ class LoginController extends Controller
      * Validate the user login request.
      *
      * @param \Illuminate\Http\Request $request
-     * @return void
+     * @return \Illuminate\Http\RedirectResponse
      *
      * @throws \Illuminate\Validation\ValidationException
      */
     protected function validateLogin(Request $request)
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'password' => 'required|string',
             'captcha' => 'required|captcha',
-        ], ['captcha.captcha' => 'Incorrect Captcha. Please try again!']);
+        ], ['captcha.captcha' => 'Incorrect credentials or captcha. Please try again!']);
+
+        if ($validator->fails()) {
+            return $validator->errors()->first();
+        }
+        return null;
     }
 
     /**
