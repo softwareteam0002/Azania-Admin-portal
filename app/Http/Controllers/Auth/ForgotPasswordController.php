@@ -37,6 +37,7 @@ class ForgotPasswordController extends Controller
     */
 
     use SendsPasswordResetEmails;
+    public const ACTIVE = 1;
 
     /**
      * Create a new controller instance.
@@ -56,7 +57,7 @@ class ForgotPasswordController extends Controller
     public function showResetForm(Request $request)
     {
         $token = $request->query('token');
-        $policy = PasswordPolicy::where('status', 1)->first();
+        $policy = PasswordPolicy::where('status', self::ACTIVE)->first();
         return view('auth.set_password', compact('token', 'policy'));
     }
 
@@ -173,62 +174,69 @@ class ForgotPasswordController extends Controller
 
     public function recoverPassword($request, $token = null, $email)
     {
-        $policy = PasswordPolicy::query()->where('status', 1)->first();
-        if (!$policy) {
-            Auth::logout();
-            return redirect()->route('login')->withErrors('Password Policy Not Configured, Please Contact Administrator');
-        }
+        try {
+            $policy = PasswordPolicy::query()->where('status', 1)->first();
+            if (!$policy) {
+                Auth::logout();
+                return redirect()->route('login')->withErrors('Password Policy Not Configured, Please Contact Administrator');
+            }
 
-        $rules = [
-            'password' => ['required', 'min:' . $policy->min_length],
-            'confirm_password' => ['required', 'min:' . $policy->min_length, 'same:password']
-        ];
+            $rules = [
+                'password' => ['required', 'min:' . $policy->min_length],
+                'confirm_password' => ['required', 'min:' . $policy->min_length, 'same:password']
+            ];
 
-        switch ($policy->complexity) {
-            case 'strong':
-                $rules['password'][] = new StrongPassword();
-                $rules['confirm_password'][] = new StrongPassword();
-                break;
-            case 'medium':
-                $rules['password'][] = new MediumPassword();
-                $rules['confirm_password'][] = new MediumPassword();
-                break;
-            default:
-                break;
-        }
+            switch ($policy->complexity) {
+                case 'strong':
+                    $rules['password'][] = new StrongPassword();
+                    $rules['confirm_password'][] = new StrongPassword();
+                    break;
+                case 'medium':
+                    $rules['password'][] = new MediumPassword();
+                    $rules['confirm_password'][] = new MediumPassword();
+                    break;
+                default:
+                    break;
+            }
 
-        $validator = Validator::make($request, $rules);
+            $validator = Validator::make($request, $rules);
 
-        if ($validator->fails()) {
-            $notification = $validator->errors()->first();
+            if ($validator->fails()) {
+                $notification = $validator->errors()->first();
+                $color = 'danger';
+                return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color, 'recover_token' => encrypt($token)]);
+            }
+
+            $user = User::where('email', $email)->first();
+
+            if ($this->checkHistory($user, $policy, $request['confirm_password'])) {
+                $notification = "You cannot reuse any of your last $policy->password_history passwords.";
+                $color = 'danger';
+                return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color, 'recover_token' => encrypt($token)]);
+            }
+
+            $user->password = Hash::make($request['confirm_password']);
+
+            if ($user->save()) {
+                $this->auditLog($user->id, 'Recover Password', 'User Management', 'Successfully Recovered Password');
+                $notification = 'Password reset is successfully done';
+                $color = 'success';
+                $message = $this->message($user);
+                Mail::to($user->email)->queue(new EmailNotification($message));
+                $this->clearToken($token);
+                return redirect('login')->with(['notification' => $notification, 'color' => $color]);
+            }
+
+            $notification = 'Password reset failed, Try again later!';
             $color = 'danger';
+
             return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color, 'recover_token' => encrypt($token)]);
-        }
-
-        $user = User::where('email', $email)->first();
-
-        if ($this->checkHistory($user, $policy, $request['confirm_password'])) {
-            $notification = "You cannot reuse any of your last $policy->password_history passwords.";
+        } catch (\Exception $e) {
+            Log::error("Recover Password Exception: " ,['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile() ]);
+            $notification = 'Failed to recover password. Please try again later!';
             $color = 'danger';
-            return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color, 'recover_token' => encrypt($token)]);
+            return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color]);
         }
-
-        $user->password = Hash::make($request['confirm_password']);
-
-        if ($user->save()) {
-            $this->auditLog($user->id, 'Recover Password', 'User Management', 'Successfully Recovered Password');
-            $notification = 'Password reset is successfully done';
-            $color = 'success';
-            $message = $this->message($user);
-            Mail::to($user->email)->queue(new EmailNotification($message));
-            $this->clearToken($token);
-            return redirect('login')->with(['notification' => $notification, 'color' => $color]);
-        }
-
-        $notification = 'Password reset failed, Try again later!';
-        $color = 'danger';
-
-        return redirect('set_credentials')->with(['notification' => $notification, 'color' => $color, 'recover_token' => encrypt($token)]);
     }
 
     private function checkHistory($user, $policy, $newPassword)
