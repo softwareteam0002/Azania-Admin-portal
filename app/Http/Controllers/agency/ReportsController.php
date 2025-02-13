@@ -1,75 +1,67 @@
 <?php
 
-namespace App\Http\Controllers\Agency;
+namespace App\Http\Controllers\agency;
 
+use App\Exports\AbAccountsExport;
+use App\Exports\AbAgentsExport;
+use App\Exports\ABCommisionDistributionExport;
+use App\Exports\ABReportsExport;
 use App\Http\Controllers\Controller;
+use App\TblABBankAccounts;
+use App\TblABServiceCommision;
+use Excel;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\TblABServiceCommision;
-use App\TblABBankAccounts;
-use App\TblABAccountOpening;
-use Illuminate\Http\Request;
-use Excel;
-use PDF;
-use App\Exports\ABReportsExport;
-use App\Exports\AbAgentsExport;
-use App\Exports\AbAccountsExport;
-use App\Exports\ABCommisionDistributionExport;
 
 class ReportsController extends Controller
 {
-
-    //format the date to create a format to select between
-    private function convertDate($today)
-    {
-        $format = "Y-m-d H:i:s";
-        $d = strtotime($today);
-        return date($format, $d);
-    }
-
     public function index()
     {
-        $accounts = TblABBankAccounts::where('account_type_id', 1)->get();
-        $today = date("Y-m-d");
-        //return the payload
-        return view('agency.reports.index', compact(
-            'today',
-            'accounts'
-        ));
+        try {
+            $accounts = TblABBankAccounts::where('account_type_id', 1)->get();
+            $today = date("Y-m-d");
+            //return the payload
+            return view('agency.reports.index', compact(
+                'today',
+                'accounts'
+            ));
+        } catch (\Exception $e) {
+            Log::error('INDEX-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return redirect()->back()->with(['notification' => 'Failed to load reports page.', 'color' => 'danger']);
+        }
     }
 
     public function export(Request $r)
     {
         try {
-
-            if ($r->report_type == 'pdf') {
+            if ($r->report_type === 'pdf') {
                 return back()->with(['notification' => "PDF Format is currently not available!", 'color' => 'warning']);
             }
 
             $from_date = $r->from_date . " 00:00:00";
             $to_date = $r->to_date . " 23:59:59";
 
-            // If customer_type is set, handle customer-related logic
             if (isset($r->customer_type)) {
-                if ($r->customer_type == 'Agents') {
+
+                if ($r->customer_type === 'Agents') {
                     $agents = DB::connection('sqlsrv4')->table('agency_agents_registration_report_view')
                         ->whereBetween('REGISTRATION DATE', [$from_date, $to_date])
                         ->get();
 
-                    if (count($agents) == 0) {
+                    if (count($agents) === 0) {
                         return back()->with(['notification' => "No data found for the provided date range", 'color' => 'danger']);
                     }
 
                     $xls = new AbAgentsExport();
                     $xls->agents = $agents;
-
-                } elseif ($r->customer_type == 'Accounts') {
+                } elseif ($r->customer_type === 'Accounts') {
                     $accounts = DB::connection('sqlsrv4')->table('agency_account_opening_report_view')
                         ->whereBetween('DATE', [$from_date, $to_date])
                         ->get();
 
-                    if (count($accounts) == 0) {
+                    if (count($accounts) === 0) {
                         return back()->with(['notification' => "No data found for the provided date range", 'color' => 'danger']);
                     }
 
@@ -81,9 +73,10 @@ class ReportsController extends Controller
                 $xls->to_date = $to_date;
 
                 return Excel::download($xls, "AB-{$r->customer_type}-Report: $r->from_date - $r->to_date.xlsx");
+
             }
 
-            // If customer_type is not set, handle transaction-related logic
+
             $transactions = DB::connection('sqlsrv4')->table('agency_transactions_report_view')
                 ->whereBetween('TRANSACTION DATE', [$from_date, $to_date]);
 
@@ -101,22 +94,11 @@ class ReportsController extends Controller
 
             $transactions = $transactions->get();
 
-            if (count($transactions) == 0) {
+            if (count($transactions) === 0) {
                 return back()->with(['notification' => "No data found for the provided date range", 'color' => 'danger']);
             }
 
-            if ($r->report_type == "pdf") {
-                return back()->with(['notification' => "PDF Format is currently not available!", 'color' => 'warning']);
-                /*$pdf = PDF::loadView('agency.reports.regular', compact(
-                    'from_date',
-                    'to_date',
-                    's_title',
-                    'transactions'
-                ));
-                $pdf->setPaper('A4', 'landscape');
-                return $pdf->download("AB-Report: $from_date - $to_date - $s_title.pdf");*/
-
-            } elseif ($r->report_type == "xls") {
+            if ($r->report_type === "xls") {
                 $xls = new ABReportsExport();
                 $xls->transactions = $transactions;
                 $xls->from_date = $from_date;
@@ -126,89 +108,110 @@ class ReportsController extends Controller
             }
 
             return redirect()->back()->with(['notification' => "Please specify a report format.", 'color' => 'danger']);
+           
         } catch (\Exception $e) {
-            Log::error('AGENCY-REPORTS-EXCEPTION: ' . $e->getMessage());
+            Log::error('EXPORT-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return redirect()->back()->with(['notification' => "Failed to generate report", 'color' => 'danger']);
         }
     }
 
     public function exportCommissionDistribution(Request $r)
     {
-        $commissions = TblABServiceCommision::where('is_paid', 0)->get();
-        $accounts = TblABBankAccounts::where('account_type_id', 1)->get();
-        $xls = new ABCommisionDistributionExport();
-        $xls->commissions = $commissions;
-        $xls->accounts = $accounts;
+        try {
+            $commissions = TblABServiceCommision::where('is_paid', 0)->get();
+            $accounts = TblABBankAccounts::where('account_type_id', 1)->get();
+            $xls = new ABCommisionDistributionExport();
+            $xls->commissions = $commissions;
+            $xls->accounts = $accounts;
 
-        return Excel::download($xls, "Unpaid Commision Distribution.xlsx");
+            return Excel::download($xls, "Unpaid Commision Distribution.xlsx");
+        } catch (\Exception $e) {
+            Log::error('EXPORT-COMMISSION-DISTRIBUTION-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return redirect()->back()->with(['notification' => "Failed to export commission distribution", 'color' => 'danger']);
+        }
     }
 
-
-    //added by Evance Nganyaga
     public function approveCommissionDistribution(Request $r)
     {
-        $uid = Auth::user()->id;
-        $account_id = $r->account_id;
-        $op = $r->op;
-        if ($op == 1) {
-            //approve
-            $is_paid = 1;
-            $update = TblABServiceCommision::where('is_paid', 0)
-                ->update([
-                    'approver_id' => $uid,
-                    'is_paid' => $is_paid
-                ]);
-            $notification = "Unpaid commision initiated  successfully!";
-        } else {
-            //initiate
-            $is_paid = 0;
-            $update = TblABServiceCommision::where('is_paid', 0)
-                ->update([
-                    'initiator_id' => $uid,
-                    'is_paid' => $is_paid
-                ]);
-            $notification = "Unpaid commision approved unsuccessfully!";
-        }
-        if ($update == true) {
-            return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
-        } else {
-            return redirect()->back()->with(['notification' => 'Agent commision distribution approved/disapproved unsuccessfully!', 'color' => 'danger']);
+        try {
+            $uid = Auth::user()->id;
+            $op = $r->op;
+            try {
+                if ($op === 1) {
+                    $is_paid = 1;
+                    $update = TblABServiceCommision::where('is_paid', 0)
+                        ->update([
+                            'approver_id' => $uid,
+                            'is_paid' => $is_paid
+                        ]);
+                    $notification = "Unpaid commision initiated  successfully!";
+                } else {
+                    $is_paid = 0;
+                    $update = TblABServiceCommision::where('is_paid', 0)
+                        ->update([
+                            'initiator_id' => $uid,
+                            'is_paid' => $is_paid
+                        ]);
+                    $notification = "Unpaid commision approved unsuccessfully!";
+                }
+
+                if ($update) {
+                    return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
+                }
+
+                return redirect()->back()->with(['notification' => 'Agent commision distribution approved/disapproved unsuccessfully!', 'color' => 'danger']);
+            } catch (\Exception $e) {
+                Log::error('UPDATE-COMMISSION-DISTRIBUTION-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+                return redirect()->back()->with(['notification' => 'An error occurred during commission update.', 'color' => 'danger']);
+            }
+        } catch (\Exception $e) {
+            Log::error('APPROVE-COMMISSION-DISTRIBUTION-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return redirect()->back()->with(['notification' => 'An error occurred while processing the commission distribution.', 'color' => 'danger']);
         }
     }
 
     public function getTransactionType($service)
     {
-        if (is_array($service)) {
-            $results = [];
-            foreach ($service as $item) {
-                $results = $this->getTransactionTypeForSingleService($item);
+        try {
+            if (is_array($service)) {
+                $results = [];
+                foreach ($service as $item) {
+                    $results = $this->getTransactionTypeForSingleService($item);
+                }
+                return $results;
             }
-            return $results;
-        }
 
-        return $this->getTransactionTypeForSingleService($service);
+            return $this->getTransactionTypeForSingleService($service);
+        } catch (\Exception $e) {
+            Log::error('GET-TRANSACTION-TYPE-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return null;
+        }
     }
 
     private function getTransactionTypeForSingleService($service): ?array
     {
-        switch ($service) {
-            case 'BI':
-                return ['BALANCE_INQUIRY', 'BALANCE_INQUIRY_CARD'];
-            case 'B2W':
-                return ['B2W_TRANSFER'];
-            case 'DC':
-                return ['DEPOSIT_CARD', 'DEPOSIT'];
-            case 'WC':
-                return ['WITHDRAWAL_CARD'];
-            case 'FT':
-                return ['FUND_TRANSFER'];
-            case 'MS':
-                return ['MINISTATEMENT'];
-            case 'PAY':
-                return ['UTILITY'];
-            default:
-                return null;
+        try {
+            switch ($service) {
+                case 'BI':
+                    return ['BALANCE_INQUIRY', 'BALANCE_INQUIRY_CARD'];
+                case 'B2W':
+                    return ['B2W_TRANSFER'];
+                case 'DC':
+                    return ['DEPOSIT_CARD', 'DEPOSIT'];
+                case 'WC':
+                    return ['WITHDRAWAL_CARD'];
+                case 'FT':
+                    return ['FUND_TRANSFER'];
+                case 'MS':
+                    return ['MINISTATEMENT'];
+                case 'PAY':
+                    return ['UTILITY'];
+                default:
+                    return null;
+            }
+        } catch (\Exception $e) {
+            Log::error('GET-TRANSACTION-TYPE-SINGLE-SERVICE-EXCEPTION:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return null;
         }
     }
-
 }
