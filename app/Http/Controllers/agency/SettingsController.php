@@ -78,14 +78,13 @@ class SettingsController extends Controller
             $notification = 'Something went wrong, Try again later!';
             $color = 'danger';
             $this->auditLog($uid, 'Add Biller', "Agency Settings", $e->getMessage(), $request->ip());
-            Log::error("Add Billers Exception: " . json_encode($e->getMessage()));
+            Log::error("Add Billers Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return redirect('agency/view_biller')->with('notification', $notification)->with('color', $color);
         }
     }
 
     public function approveBiller(Request $request, $id)
     {
-
         $biller = AbBiller::findOrFail($id);
         $billergroups = AbBillerGroup::all();
         $statuses = AbStatus::all();
@@ -131,7 +130,7 @@ class SettingsController extends Controller
             $notification = "Something went wrong, Try again later!";
             $color = "danger";
             $this->auditLog($user_id, 'Approve Biller Exception', "Agency Settings", $e->getMessage(), $request->ip());
-            Log::error("Approve Biller Exception: " . $e->getMessage());
+            Log::error("Approve Biller Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
 
             return redirect()->route('agency.view_biller')->with([
                 'notification' => $notification,
@@ -156,27 +155,31 @@ class SettingsController extends Controller
             'biller_short_name' => 'required',
             'biller_group' => 'required',
             'utility_code' => 'required',
-
-
         ]);
 
-        $db_action = AbBiller::where('biller_id', $request->id)->update([
-            'biller_short_name' => $request->biller_short_name,
-            'biller_description' => $request->biller_description,
-            'biller_status' => 2,
-            'biller_group' => $request->biller_group,
-            'utility_code' => $request->utility_code,
-            'biller_institution_name' => $request->biller_institution_name,
-            'isWaitingApproval' => 1,
-            'approver_id' => 0
-        ]);
+        try {
+            $db_action = AbBiller::where('biller_id', $request->id)->update([
+                'biller_short_name' => $request->biller_short_name,
+                'biller_description' => $request->biller_description,
+                'biller_status' => 2,
+                'biller_group' => $request->biller_group,
+                'utility_code' => $request->utility_code,
+                'biller_institution_name' => $request->biller_institution_name,
+                'isWaitingApproval' => 1,
+                'approver_id' => 0
+            ]);
 
-        if ($db_action == true) {
-            $notification = "Biller updated successfully";
-            $color = "success";
-        } else {
-            $notification = "Biller was not updated!";
+            if ($db_action) {
+                $notification = "Biller updated successfully";
+                $color = "success";
+            } else {
+                $notification = "Biller was not updated!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            $notification = "Something went wrong, Try again later!";
             $color = "danger";
+            Log::error("Update Biller Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
         }
 
         return redirect('agency/view_biller')->with('notification', $notification)->with('color', $color);
@@ -215,7 +218,7 @@ class SettingsController extends Controller
             }
             return redirect()->back()->with(['notification' => "Failed to activate/deactivate bank", 'color' => $color]);
         } catch (\Exception $e) {
-            Log::error("Change Bank Status Exception: " . json_encode($e->getMessage()));
+            Log::error("Change Bank Status Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return redirect()->back()->with(['notification' => "Something went wrong!", 'color' => "danger"]);
         }
     }
@@ -242,20 +245,25 @@ class SettingsController extends Controller
             return redirect()->back()->with(['notification' => "Failed to activate/deactivate biller", 'color' =>
                 $color]);
         } catch (\Exception $e) {
-            Log::error("Change Biller Status Exception: " . json_encode($e->getMessage()));
+            Log::error("Change Biller Status Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return redirect()->back()->with(['notification' => "Something went wrong!", 'color' => "danger"]);
         }
     }
 
     public function downloadtemplate()
     {
-        $file_name = 'bank_template.xlsx';
-        $path = storage_path() . '/' . 'template/' . $file_name;
+        try {
+            $file_name = 'bank_template.xlsx';
+            $path = storage_path() . '/' . 'template/' . $file_name;
 
-        if (file_exists($path)) {
-            return Response::download($path);
-        } else {
-            return redirect()->back()->with(['notification' => "Template doesn't exist", 'color' => "danger"]);
+            if (file_exists($path)) {
+                return Response::download($path);
+            } else {
+                return redirect()->back()->with(['notification' => "Template doesn't exist", 'color' => "danger"]);
+            }
+        } catch (\Exception $e) {
+            Log::error("Download Template Exception: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return redirect()->back()->with(['notification' => "Something went wrong!", 'color' => "danger"]);
         }
     }
 
@@ -267,31 +275,30 @@ class SettingsController extends Controller
                 'extension' => strtolower($request->file->getClientOriginalExtension()),
             ],
             [
-                'file' => 'required',
-                'extension' => 'required|in:xlsx,xls',
+                'file' => 'required|file|mimes:xlsx,xls',
             ]
         );
 
         if ($validator->fails()) {
-            return redirect()->back()->with(['notification' => $validator->errors(), 'color' => "danger"]);
+            return redirect()->back()->with(['notification' => $validator->errors()->first(), 'color' => "danger"]);
         }
 
         try {
-            Excel::import(new BanksImport(), request()->file('file'));
+            Excel::import(new BanksImport(), $request->file('file'));
             return redirect()->back()->with(['notification' => "File Imported Successfully", 'color' => "success"]);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
-            $failures = $e->failures();
-            foreach ($failures as $failure) {
-                $failure->row();
-                $failure->attribute();
-                $failure->errors();
-                $failure->values();
+            $failure = $e->failures()[0] ?? null;
+
+            if ($failure) {
+                $message = "The value of {$failure->attribute()} on row {$failure->row()} is not valid";
+            } else {
+                $message = "Validation error in the uploaded file.";
             }
-            $errors = json_encode($failure->errors());
-            return redirect()->back()->with(['notification' => "The value of " . $failure->attribute() . " on row " . $failure->row() . " is not valid", 'color' => "danger"]);
-        } catch (Exception $e) {
-            Log::error($e->getMessage() . "\n" . $e->getTraceAsString());
-            return redirect()->back()->with(['notification' => "Please fill all necessary fields in the excel file", 'color' => "danger"]);
+
+            return redirect()->back()->with(['notification' => $message, 'color' => "danger"]);
+        } catch (\Exception $e) {
+            Log::error("Store Bank Batch Exception", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            return redirect()->back()->with(['notification' => "An error occurred while importing the file. Please try again.", 'color' => "danger"]);
         }
     }
 
@@ -334,7 +341,7 @@ class SettingsController extends Controller
                 $color = "danger";
             }
         } catch (\Exception $e) {
-            Log::error('Settings-Add-Bank-Exception: ' . json_encode($e->getMessage()));
+            Log::error('Settings-Add-Bank-Exception: ', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $notification = "Something went wrong, Try again later!";
             $color = "danger";
             $this->auditLog(Auth::user()->id, 'Exception Add Bank', 'Agency Settings', $notification, $request->ip());
@@ -346,7 +353,6 @@ class SettingsController extends Controller
     //added by Evance Nganyaga
     public function approveBank(Request $request, $id)
     {
-
         $bank = AbBank::findOrFail($id);
         return view('agency.settings.approve_bank', compact('bank'));
     }
@@ -354,17 +360,41 @@ class SettingsController extends Controller
     public function approveBankAct(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
 
-            AbBank::where(['bank_id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_bank')->with(['notification' => 'Bank has been rejected successfully', 'color' => 'success']);
+        try {
+            $bank = AbBank::findOrFail($id);
+
+            if ($request->has('reject')) {
+                $bank->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
+                return redirect()->route('agency.view_bank')->with([
+                    'notification' => 'Bank has been rejected successfully',
+                    'color' => 'success'
+                ]);
+            }
+
+            if ($request->has('approve')) {
+                $bank->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
+                return redirect()->route('agency.view_bank')->with([
+                    'notification' => 'Bank has been approved successfully',
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'Invalid action provided!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Approve Bank Act Exception: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            AbBank::where(['bank_id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_bank')->with(['notification' => 'Bank has been approved successfully', 'color' => 'success']);
-        }
-
     }
 
 
@@ -377,24 +407,29 @@ class SettingsController extends Controller
 
     public function updateBank(Request $request)
     {
-        $uid = Auth::user()->id;
         $request->validate([
             'bank_name' => 'required|max:30',
             'bank_code' => 'required|max:20'
         ]);
 
-        $db_action = AbBank::where('bank_id', $request->id)->update([
-            'bank_name' => $request->bank_name,
-            'bank_code' => $request->bank_code,
-            'isWaitingApproval' => 1,
-            'approver_id' => 0,
-        ]);
+        try {
+            $db_action = AbBank::where('bank_id', $request->id)->update([
+                'bank_name' => $request->bank_name,
+                'bank_code' => $request->bank_code,
+                'isWaitingApproval' => 1,
+                'approver_id' => 0,
+            ]);
 
-        if ($db_action == true) {
-            $notification = "Bank updated successfully";
-            $color = "success";
-        } else {
-            $notification = "Bank was not updated!";
+            if ($db_action) {
+                $notification = "Bank updated successfully";
+                $color = "success";
+            } else {
+                $notification = "Bank was not updated!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error('Update Bank Exception: ', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            $notification = "An error occurred while updating the bank!";
             $color = "danger";
         }
 
@@ -403,31 +438,85 @@ class SettingsController extends Controller
 
     public function deleteBankApproval(Request $request, $id)
     {
-
-        $bank = AbBank::findOrFail($id);
-        $statuses = AbStatus::all();
-        return view('agency.settings.delete_bank_approval', compact('bank', 'statuses'));
+        try {
+            $bank = AbBank::findOrFail($id);
+            $statuses = AbStatus::all();
+            return view('agency.settings.delete_bank_approval', compact('bank', 'statuses'));
+        } catch (\Exception $e) {
+            Log::error("Delete Bank Approval Exception: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->back()->with(['notification' => "Something went wrong!", 'color' => "danger"]);
+        }
     }
 
     public function deleteBank($id)
     {
         $user_id = Auth::id();
-        AbBank::where(['bank_id' => $id])->update(['isWaitingApproval' => 1, 'approver_id' => 0, 'deletedBy_id' => $user_id, 'isDeleted' => 1]);
-        return redirect()->route('agency.view_bank')->with(['notification' => 'Bank delete request sent for approval', 'color' => 'success']);
+        try {
+            AbBank::where(['bank_id' => $id])->update([
+                'isWaitingApproval' => 1,
+                'approver_id' => 0,
+                'deletedBy_id' => $user_id,
+                'isDeleted' => 1
+            ]);
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'Bank delete request sent for approval',
+                'color' => 'success'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Delete Bank Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'An error occurred while sending the delete request!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function deleteBankActApproval(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
+        try {
+            if ($request->reject === 'reject') {
+                AbBank::where(['bank_id' => $id])->update([
+                    'isWaitingApproval' => 0,
+                    'approver_id' => $user_id,
+                    'isDeleted' => 0
+                ]);
+                return redirect()->route('agency.view_bank')->with([
+                    'notification' => 'Bank deleting has been rejected successfully',
+                    'color' => 'success'
+                ]);
+            }
 
-            AbBank::where(['bank_id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDeleted' => 0]);
-            return redirect()->route('agency.view_bank')->with(['notification' => 'Bank deleting has been rejected successfully', 'color' => 'success']);
-        }
+            if ($request->approve === 'approve') {
+                AbBank::where(['bank_id' => $id])->delete();
+                return redirect()->route('agency.view_bank')->with([
+                    'notification' => 'Bank deleting has been approved successfully',
+                    'color' => 'success'
+                ]);
+            }
 
-        if ($request->approve == 'approve') {
-            AbBank::where(['bank_id' => $id])->delete();
-            return redirect()->route('agency.view_bank')->with(['notification' => 'Bank deleting has been approved successfully', 'color' => 'success']);
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'Invalid action!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Delete Bank Approval Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_bank')->with([
+                'notification' => 'Something went wrong, please try again.',
+                'color' => 'danger'
+            ]);
         }
     }
 
@@ -450,19 +539,29 @@ class SettingsController extends Controller
             return redirect('agency/view_biller_group')->with('notification', 'Drescription is too long, please make it short.')->with('color', 'info');
         }
 
-        $db_action = AbBillerGroup::insert([
-            'biller_group_name' => $request->biller_group_name,
-            'biller_group_description' => $request->biller_group_description,
-            'isWaitingApproval' => 1,
-            'approver_id' => 1,
-            'initiator_id' => $uid
-        ]);
+        try {
+            $db_action = AbBillerGroup::insert([
+                'biller_group_name' => $request->biller_group_name,
+                'biller_group_description' => $request->biller_group_description,
+                'isWaitingApproval' => 1,
+                'approver_id' => 1,
+                'initiator_id' => $uid
+            ]);
 
-        if ($db_action == true) {
-            $notification = "Biller group added successfully";
-            $color = "success";
-        } else {
-            $notification = "Biller group was not added!";
+            if ($db_action) {
+                $notification = "Biller group added successfully";
+                $color = "success";
+            } else {
+                $notification = "Biller group was not added!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error('Store Biller Group Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $notification = "An error occurred while adding the biller group!";
             $color = "danger";
         }
 
@@ -471,89 +570,164 @@ class SettingsController extends Controller
 
     public function approveBillerGroup(Request $request, $id)
     {
-
-        $biller_group = AbBillerGroup::findOrFail($id);
-        return view('agency.settings.approve_biller_group', compact('biller_group'));
+        try {
+            $biller_group = AbBillerGroup::findOrFail($id);
+            return view('agency.settings.approve_biller_group', compact('biller_group'));
+        } catch (\Exception $e) {
+            Log::error('Approve Biller Group Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_biller_group')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function approveBillerGroupAct(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
+        try {
+            $action = $request->reject === 'reject' ? [
+                'isWaitingApproval' => 2,
+                'approver_id' => $user_id,
+                'notification' => 'Biller Group has been rejected successfully'
+            ] : ($request->approve === 'approve' ? [
+                'isWaitingApproval' => 0,
+                'approver_id' => $user_id,
+                'notification' => 'Biller Group has been approved successfully'
+            ] : null);
 
-            AbBillerGroup::where(['biller_group_id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_biller_group')->with(['notification' => 'Biller Group has been rejected successfully', 'color' => 'success']);
+            if ($action) {
+                AbBillerGroup::where('biller_group_id', $id)->update([
+                    'isWaitingApproval' => $action['isWaitingApproval'],
+                    'approver_id' => $action['approver_id']
+                ]);
+                return redirect()->route('agency.view_biller_group')->with([
+                    'notification' => $action['notification'],
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.view_biller_group')->with([
+                'notification' => 'Invalid action!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve Biller Group Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_biller_group')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            AbBillerGroup::where(['biller_group_id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_biller_group')->with(['notification' => 'Biller Group has been approved successfully', 'color' => 'success']);
-        }
-
-
     }
 
     public function editBillerGroup($id)
     {
-        $biller_group = AbBillerGroup::where('biller_group_id', $id)->get()[0];
+        $biller_group = AbBillerGroup::where('biller_group_id', $id)->first();
         return view('agency.settings.edit_biller_group', compact('biller_group'));
     }
 
     public function updateBillerGroup(Request $request)
     {
-        $uid = Auth::user()->id;
         $request->validate([
             'biller_group_name' => 'required',
-            'biller_group_description' => 'required'
+            'biller_group_description' => 'required',
         ]);
 
-        $db_action = AbBillerGroup::where('biller_group_id', $request->biller_group_id)->update([
-            'biller_group_name' => $request->biller_group_name,
-            'biller_group_description' => $request->biller_group_description,
-            'isWaitingApproval' => 1,
-            'approver_id' => 0
+        try {
+            $updateData = [
+                'biller_group_name' => $request->biller_group_name,
+                'biller_group_description' => $request->biller_group_description,
+                'isWaitingApproval' => 1,
+                'approver_id' => 0,
+            ];
 
-        ]);
+            $db_action = AbBillerGroup::where('biller_group_id', $request->biller_group_id)->update($updateData);
 
-        if ($db_action == true) {
-            $notification = "Biller group updated successfully";
-            $color = "success";
-        } else {
-            $notification = "Biller group was not updated!";
-            $color = "danger";
+            if ($db_action) {
+                return redirect('agency/view_biller_group')->with([
+                    'notification' => 'Biller group updated successfully',
+                    'color' => 'success',
+                ]);
+            } else {
+                return redirect('agency/view_biller_group')->with([
+                    'notification' => 'Biller group was not updated!',
+                    'color' => 'danger',
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Update Biller Group Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return redirect('agency/view_biller_group')->with([
+                'notification' => 'An error occurred while updating the biller group!',
+                'color' => 'danger',
+            ]);
         }
-
-        return redirect('agency/view_biller_group')->with('notification', $notification)->with('color', $color);
     }
 
     public function approveCommission(Request $request, $id)
     {
-
         $commission = CommissionDistribution::where('commision_id', $id)->first();
-
         return view('agency.commissions.approve_commission', compact('commission'));
     }
 
     public function approveCommissionAct(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
 
-            CommissionDistribution::where(['commision_id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect('agency/commissions')->with(['notification' => 'Commission has been rejected successfully', 'color' => 'success']);
+        try {
+            $action = $request->reject === 'reject' ? [
+                'isWaitingApproval' => 2,
+                'approver_id' => $user_id,
+                'notification' => 'Commission has been rejected successfully'
+            ] : ($request->approve === 'approve' ? [
+                'isWaitingApproval' => 0,
+                'approver_id' => $user_id,
+                'notification' => 'Commission has been approved successfully'
+            ] : null);
+
+            if ($action) {
+                CommissionDistribution::where(['commision_id' => $id])->update([
+                    'isWaitingApproval' => $action['isWaitingApproval'],
+                    'approver_id' => $action['approver_id']
+                ]);
+
+                return redirect('agency/commissions')->with([
+                    'notification' => $action['notification'],
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect('agency/commissions')->with([
+                'notification' => 'Invalid action!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve Commission Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect('agency/commissions')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            CommissionDistribution::where(['commision_id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect('agency/commissions')->with(['notification' => 'Commission has been approved successfully', 'color' => 'success']);
-        }
-
-
     }
 
     public function indexSecurityPolicies()
     {
-
         $pinpolicy = TblABPINPolicy::all();
         $otppolicy = TblABOTPPolicy::all();
         return view('agency.settings.securitypolicy', compact('pinpolicy', 'otppolicy'));
@@ -569,20 +743,30 @@ class SettingsController extends Controller
             'max_attempts' => 'required'
         ]);
 
-        $db_action = TblABOTPPolicy::where('id', $request->id)->update([
-            'min_length' => $request->min_length,
-            'max_length' => $request->max_length,
-            'max_attempts' => $request->max_attempts,
-            'initiator_id' => $uid,
-            'approver_id' => 0,
-            'isWaitingApproval' => 1
-        ]);
+        try {
+            $db_action = TblABOTPPolicy::where('id', $request->id)->update([
+                'min_length' => $request->min_length,
+                'max_length' => $request->max_length,
+                'max_attempts' => $request->max_attempts,
+                'initiator_id' => $uid,
+                'approver_id' => 0,
+                'isWaitingApproval' => 1
+            ]);
 
-        if ($db_action == true) {
-            $notification = "OTP Policy updated successfully";
-            $color = "success";
-        } else {
-            $notification = "OTP Policy was not updated!";
+            if ($db_action) {
+                $notification = "OTP Policy updated successfully";
+                $color = "success";
+            } else {
+                $notification = "OTP Policy was not updated!";
+                $color = "danger";
+            }
+        } catch (\Exception $e) {
+            Log::error('Update OTP Security Policies Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $notification = "An error occurred while updating the OTP Policy!";
             $color = "danger";
         }
 
@@ -591,21 +775,42 @@ class SettingsController extends Controller
 
     public function approvePinPolicy($id)
     {
-
         $pinpolicy = TblABPINPolicy::findOrFail($id);
         return view('agency.settings.approve_ppolicy', compact('pinpolicy'));
-
     }
 
     public function approvePinPolicyAct(Request $request, $id)
     {
-        if ($request->approve === 'approve') {
-            TblABPINPolicy::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => Auth::id()]);
-            return redirect()->route('agency.sPolicy.index')->with(['notification' => 'OTP policy successfully approved', 'color' => 'success']);
-        }
-        if ($request->reject === 'reject') {
-            TblABPINPolicy::where(['id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => Auth::id()]);
-            return redirect()->route('agency.sPolicy.index')->with(['notification' => 'OTP policy successfully rejected', 'color' => 'success']);
+        try {
+            $status = $request->approve === 'approve' ? 0 : ($request->reject === 'reject' ? 2 : null);
+
+            if ($status !== null) {
+                TblABPINPolicy::where(['id' => $id])->update([
+                    'isWaitingApproval' => $status,
+                    'approver_id' => Auth::id()
+                ]);
+
+                $notification = $status === 0 ? 'PIN policy successfully approved' : 'PIN policy successfully rejected';
+                return redirect()->route('agency.sPolicy.index')->with([
+                    'notification' => $notification,
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.sPolicy.index')->with([
+                'notification' => 'Invalid action',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve PIN Policy Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.sPolicy.index')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
     }
 
@@ -620,21 +825,28 @@ class SettingsController extends Controller
             'expiry_period' => 'required'
         ]);
 
-        $db_action = TblABPINPolicy::where('id', $request->id)->update([
-            'min_length' => $request->min_length,
-            'max_length' => $request->max_length,
-            'expiry_period' => $request->expiry_period,
-            'max_attempts' => $request->max_attempts,
-            'initiator_id' => $uid,
-            'approver_id' => 0,
-            'isWaitingApproval' => 1
-        ]);
+        try {
+            $updateData = [
+                'min_length' => $request->min_length,
+                'max_length' => $request->max_length,
+                'expiry_period' => $request->expiry_period,
+                'max_attempts' => $request->max_attempts,
+                'initiator_id' => $uid,
+                'approver_id' => 0,
+                'isWaitingApproval' => 1
+            ];
 
-        if ($db_action == true) {
-            $notification = "PIN Policy updated successfully";
-            $color = "success";
-        } else {
-            $notification = "PIN Policy was not updated!";
+            $db_action = TblABPINPolicy::where('id', $request->id)->update($updateData);
+
+            $notification = $db_action ? "PIN Policy updated successfully" : "PIN Policy was not updated!";
+            $color = $db_action ? "success" : "danger";
+        } catch (\Exception $e) {
+            Log::error('Update PIN Security Policy Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $notification = "An error occurred while updating the PIN Policy!";
             $color = "danger";
         }
 
@@ -643,21 +855,54 @@ class SettingsController extends Controller
 
     public function approveOtpPolicy($id)
     {
-
-        $otpPolicy = TblABOTPPolicy::findOrFail($id);
-        return view('agency.settings.approve_opolicy', compact('otpPolicy'));
-
+        try {
+            $otpPolicy = TblABOTPPolicy::findOrFail($id);
+            return view('agency.settings.approve_opolicy', compact('otpPolicy'));
+        } catch (\Exception $e) {
+            Log::error('Approve OTP Policy Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.sPolicy.index')->with([
+                'notification' => 'An error occurred while accessing the OTP policy!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function approveOtpPolicyAct(Request $request, $id)
     {
-        if ($request->approve === 'approve') {
-            TblABOTPPolicy::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => Auth::id()]);
-            return redirect()->route('agency.sPolicy.index')->with(['notification' => 'OTP policy successfully approved', 'color' => 'success']);
-        }
-        if ($request->reject === 'reject') {
-            TblABOTPPolicy::where(['id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => Auth::id()]);
-            return redirect()->route('agency.sPolicy.index')->with(['notification' => 'OTP policy successfully rejected', 'color' => 'success']);
+        try {
+            $status = $request->approve === 'approve' ? 0 : ($request->reject === 'reject' ? 2 : null);
+
+            if ($status !== null) {
+                TblABOTPPolicy::where(['id' => $id])->update([
+                    'isWaitingApproval' => $status,
+                    'approver_id' => Auth::id()
+                ]);
+
+                $notification = $status === 0 ? 'OTP policy successfully approved' : 'OTP policy successfully rejected';
+                return redirect()->route('agency.sPolicy.index')->with([
+                    'notification' => $notification,
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.sPolicy.index')->with([
+                'notification' => 'Invalid action',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve OTP Policy Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.sPolicy.index')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
     }
 
@@ -723,33 +968,37 @@ class SettingsController extends Controller
 
     public function editGEPGInstitution($id)
     {
-        $gepInstitution = AbGEPGInstitution::where('institution_id', $id)->get()[0];
+        $gepInstitution = AbGEPGInstitution::where('institution_id', $id)->first();
         $statuses = AbStatus::all();
         return view('agency.settings.edit_gepinstitution', compact('gepInstitution', 'statuses'));
     }
 
     public function updateGEPGInstitution(Request $request)
     {
-        $uid = Auth::user()->id;
         $request->validate([
             'institution_name' => 'required|max:30',
             'institution_code' => 'required|max:20',
         ]);
 
-        $db_action = AbGEPGInstitution::where('institution_id', $request->id)->update([
-            'institution_name' => $request->institution_name,
-            'institution_code' => $request->institution_code,
-            'institution_charges' => $request->institution_charges ?? 0,
-            'collection_account' => $request->collection_account,
-            'isWaitingApproval' => 1,
-            'approver_id' => 0,
-        ]);
+        try {
+            $db_action = AbGEPGInstitution::where('institution_id', $request->id)->update([
+                'institution_name' => $request->institution_name,
+                'institution_code' => $request->institution_code,
+                'institution_charges' => $request->institution_charges ?? 0,
+                'collection_account' => $request->collection_account,
+                'isWaitingApproval' => 1,
+                'approver_id' => 0,
+            ]);
 
-        if ($db_action == true) {
-            $notification = "GEPG Institution updated successfully";
-            $color = "success";
-        } else {
-            $notification = "GEPG Institution was not updated!";
+            $notification = $db_action ? "GEPG Institution updated successfully" : "GEPG Institution was not updated!";
+            $color = $db_action ? "success" : "danger";
+        } catch (\Exception $e) {
+            Log::error('Update GEPG Institution Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $notification = "An error occurred while updating the GEPG Institution!";
             $color = "danger";
         }
 
@@ -758,29 +1007,61 @@ class SettingsController extends Controller
 
     public function approveGEPGInstitution(Request $request, $id)
     {
-
-        $gepginstitution = AbGEPGInstitution::findOrFail($id);
-        return view('agency.settings.approve_gepginstitution', compact('gepginstitution'));
+        try {
+            $gepginstitution = AbGEPGInstitution::findOrFail($id);
+            return view('agency.settings.approve_gepginstitution', compact('gepginstitution'));
+        } catch (\Exception $e) {
+            Log::error('Approve GEPG Institution Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect('agency/view_gepg_institution')->with([
+                'notification' => 'An error occurred while accessing the GEPG institution!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function approveGEPGInstitutionAct(Request $request, $id)
     {
-        $user_id = Auth::id();
-        if ($request->reject == 'reject') {
+        try {
+            $user_id = Auth::id();
+            $statusMapping = [
+                'approve' => ['isWaitingApproval' => 0, 'message' => 'GEPG Institution has been approved successfully'],
+                'reject' => ['isWaitingApproval' => 2, 'message' => 'GEPG Institution has been rejected successfully']
+            ];
 
-            AbGEPGInstitution::where(['institution_id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_gepg_institution')->with(['notification' => 'GEPG Institution has been rejected successfully', 'color' => 'success']);
+            $action = $request->approve ?? $request->reject;
+
+            if (isset($statusMapping[$action])) {
+                AbGEPGInstitution::where('institution_id', $id)->update([
+                    'isWaitingApproval' => $statusMapping[$action]['isWaitingApproval'],
+                    'approver_id' => $user_id
+                ]);
+
+                return redirect()->route('agency.view_gepg_institution')->with([
+                    'notification' => $statusMapping[$action]['message'],
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.view_gepg_institution')->with([
+                'notification' => 'Invalid action',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve GEPG Institution Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_gepg_institution')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            AbGEPGInstitution::where(['institution_id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_gepg_institution')->with(['notification' => 'GEPG Institution has been approved successfully', 'color' => 'success']);
-        }
-
     }
-
-    //sadaka digital
-
 
     public function createSadakaDigital()
     {
@@ -793,23 +1074,30 @@ class SettingsController extends Controller
     public function storeSadakaDigital(Request $request)
     {
         $uid = Auth::user()->id;
+
         $request->validate([
             'charge' => 'required|max:30',
             'account_number' => 'required|max:20',
         ]);
 
-        $db_action = AbSadakaDigital::insert([
-            'charge' => $request->charge,
-            'account_number' => $request->institution_code,
-            'initiator_id' => $uid,
-            'isWaitingApproval' => 1
-        ]);
+        try {
+            $db_action = AbSadakaDigital::create([
+                'charge' => $request->charge,
+                'account_number' => $request->account_number,
+                'initiator_id' => $uid,
+                'isWaitingApproval' => 1
+            ]);
 
-        if ($db_action == true) {
-            $notification = "Sadaka Digital added successfully";
-            $color = "success";
-        } else {
-            $notification = "Sadaka Digital was not added!";
+            $notification = $db_action ? "Sadaka Digital added successfully" : "Sadaka Digital was not added!";
+            $color = $db_action ? "success" : "danger";
+        } catch (\Exception $e) {
+            Log::error('Store Sadaka Digital Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            $notification = "An error occurred while adding Sadaka Digital!";
             $color = "danger";
         }
 
@@ -818,32 +1106,35 @@ class SettingsController extends Controller
 
     public function editSadakaDigital($id)
     {
-        $sadakadigital = AbSadakaDigital::where('id', $id)->get()[0];
+        $sadakadigital = AbSadakaDigital::where('id', $id)->first();
 
         return view('agency.settings.edit_sadaka_digital', compact('sadakadigital'));
     }
 
     public function updateSadakaDigital(Request $request)
     {
-
-        $uid = Auth::user()->id;
         $request->validate([
             'charge' => 'required|max:50',
             'account_number' => 'required|max:20',
         ]);
 
-        $db_action = AbSadakaDigital::where('id', $request->id)->update([
-            'charge' => $request->charge,
-            'account_number' => $request->account_number,
-            'isWaitingApproval' => 1,
-            'approver_id' => 0,
-        ]);
+        try {
+            $db_action = AbSadakaDigital::where('id', $request->id)->update([
+                'charge' => $request->charge,
+                'account_number' => $request->account_number,
+                'isWaitingApproval' => 1,
+                'approver_id' => 0,
+            ]);
 
-        if ($db_action) {
-            $notification = "Sadaka Digital updated successfully";
-            $color = "success";
-        } else {
-            $notification = "Sadaka Digital was not updated!";
+            $notification = $db_action ? "Sadaka Digital updated successfully" : "Sadaka Digital was not updated!";
+            $color = $db_action ? "success" : "danger";
+        } catch (\Exception $e) {
+            Log::error('Update Sadaka Digital Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            $notification = "An error occurred while updating Sadaka Digital!";
             $color = "danger";
         }
 
@@ -852,29 +1143,61 @@ class SettingsController extends Controller
 
     public function approveSadakaDigital(Request $request, $id)
     {
-
-        $gepginstitution = AbSadakaDigital::findOrFail($id);
-        return view('agency.settings.approve_sadaka_digital', compact('gepginstitution'));
+        try {
+            $gepginstitution = AbSadakaDigital::findOrFail($id);
+            return view('agency.settings.approve_sadaka_digital', compact('gepginstitution'));
+        } catch (\Exception $e) {
+            Log::error('Approve Sadaka Digital Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_sadaka_digital')->with([
+                'notification' => 'An error occurred while accessing the Sadaka Digital!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function approveSadakaDigitalAct(Request $request, $id)
     {
-        $user_id = Auth::id();
-        if ($request->reject == 'reject') {
+        try {
+            $user_id = Auth::id();
+            $statusMapping = [
+                'reject' => ['isWaitingApproval' => 2, 'message' => 'Sadaka Digital has been rejected successfully'],
+                'approve' => ['isWaitingApproval' => 0, 'message' => 'Sadaka Digital has been approved successfully']
+            ];
 
-            AbSadakaDigital::where(['id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_sadaka_digital')->with(['notification' => 'Sadaka Digital has been rejected successfully', 'color' => 'success']);
+            $action = $request->approve ?? $request->reject;
+
+            if (isset($statusMapping[$action])) {
+                AbSadakaDigital::where(['id' => $id])->update([
+                    'isWaitingApproval' => $statusMapping[$action]['isWaitingApproval'],
+                    'approver_id' => $user_id
+                ]);
+
+                return redirect()->route('agency.view_sadaka_digital')->with([
+                    'notification' => $statusMapping[$action]['message'],
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.view_sadaka_digital')->with([
+                'notification' => 'Invalid action',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve Sadaka Digital Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_sadaka_digital')->with([
+                'notification' => 'Something went wrong!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            AbSadakaDigital::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_sadaka_digital')->with(['notification' => 'Sadaka Digita has been approved successfully', 'color' => 'success']);
-        }
-
     }
-
-    //end sadaka digital
-
 
     public function createBranch()
     {
@@ -938,90 +1261,237 @@ class SettingsController extends Controller
 
     public function editBranch($id)
     {
-        $branch = AbBranch::where('id', $id)->get()[0];
+        $branch = AbBranch::where('id', $id)->first();
         return view('agency.settings.edit_branch', compact('branch'));
     }
 
     public function viewBranch($id)
     {
-
-        $branch = AbBranch::findOrFail($id);
-        return view('agency.settings.show_branch', compact('branch'));
-
+        try {
+            $branch = AbBranch::findOrFail($id);
+            return view('agency.settings.show_branch', compact('branch'));
+        } catch (\Exception $e) {
+            Log::error('View Branch Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while viewing the branch!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function disableBranch($id)
     {
-        $branch = AbBranch::findOrFail($id);
-        return view('agency.settings.disable_branch', compact('branch'));
+        try {
+            $branch = AbBranch::findOrFail($id);
+            return view('agency.settings.disable_branch', compact('branch'));
+        } catch (\Exception $e) {
+            Log::error('Disable Branch Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while accessing the disable branch page!',
+                'color' => 'danger'
+            ]);
+        }
     }
-
 
     public function disableBranchAct($id, Request $request)
     {
-        if ($request->performed_act == 'disable') {
-            $user_id = Auth::user()->id;
-            AbBranch::where(['id' => $id])->update(['isWaitingApproval' => '1', 'approver_id' => '0', 'isDisabled' => 1, 'disabledBy_id' => $user_id]);
-            return redirect()->route('agency.view_branch')->with(['notification' => 'Branch disable request sent for approval', 'color' => 'success']);
-
+        try {
+            if ($request->performed_act === 'disable') {
+                $user_id = Auth::user()->id;
+                $db_action = AbBranch::where(['id' => $id])->update([
+                    'isWaitingApproval' => '1',
+                    'approver_id' => '0',
+                    'isDisabled' => 1,
+                    'disabledBy_id' => $user_id
+                ]);
+                if ($db_action) {
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch disable request sent for approval',
+                        'color' => 'success'
+                    ]);
+                }
+                return redirect()->route('agency.view_branch')->with([
+                    'notification' => 'Failed to disable',
+                    'color' => 'danger'
+                ]);
+            }
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'Invalid action performed!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Disable Branch Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while processing the disable branch request!',
+                'color' => 'danger'
+            ]);
         }
     }
 
     public function enableBranch($id)
     {
-        $branch = AbBranch::findOrFail($id);
-        return view('agency.settings.enable_branch', compact('branch'));
+        try {
+            $branch = AbBranch::findOrFail($id);
+            return view('agency.settings.enable_branch', compact('branch'));
+        } catch (\Exception $e) {
+            Log::error('Enable Branch Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while accessing the enable branch page!',
+                'color' => 'danger'
+            ]);
+        }
     }
-
 
     public function enableBranchAct(Request $request, $id)
     {
-        $user_id = Auth::id();
-        if ($request->performed_act == 'enable') {
+        try {
+            $user_id = Auth::id();
+            if ($request->performed_act === 'enable') {
+                $db_action = AbBranch::where(['id' => $id])->update([
+                    'isWaitingApproval' => '1',
+                    'approver_id' => '0',
+                    'isDisabled' => 1,
+                    'disabledBy_id' => $user_id
+                ]);
 
-            AbBranch::where(['id' => $id])->update(['isWaitingApproval' => '1', 'approver_id' => '0', 'isDisabled' => 1, 'disabledBy_id' => $user_id]);
-            return redirect()->route('agency.view_branch')->with(['notification' => 'Branch enable request sent successfully', 'color' => 'success']);
+                if ($db_action) {
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch enable request sent successfully',
+                        'color' => 'success'
+                    ]);
+                }
+                return redirect()->route('agency.view_branch')->with([
+                    'notification' => 'Failed to enable branch',
+                    'color' => 'danger'
+                ]);
 
+            }
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'Invalid action performed!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Enable Branch Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while processing the enable branch request!',
+                'color' => 'danger'
+            ]);
         }
-
     }
 
     public function disableBranchApproval($id)
     {
-        $branch = AbBranch::findOrFail($id);
-        return view('agency.settings.disable_branch_approval', compact('branch'));
+        try {
+            $branch = AbBranch::findOrFail($id);
+            return view('agency.settings.disable_branch_approval', compact('branch'));
+        } catch (\Exception $e) {
+            Log::error('Disable Branch Approval Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while accessing the disable branch approval page!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function disableBranchActApproval(Request $request, $id)
     {
+        try {
+            $user_id = Auth::id();
+            $branch = AbBranch::findOrFail($id);
 
-        $user_id = Auth::id();
-        $branch = AbBranch::findOrFail($id);
-        if ($branch->status == "Active") {
-            if ($request->reject == 'reject') {
+            if ($branch->status === "Active") {
+                if ($request->reject === 'reject') {
+                    AbBranch::where(['id' => $id])->update([
+                        'isWaitingApproval' => 0,
+                        'approver_id' => $user_id,
+                        'isDisabled' => 0
+                    ]);
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch disabling has been rejected successfully',
+                        'color' => 'success'
+                    ]);
+                }
 
-                AbBranch::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDisabled' => 0]);
-                return redirect()->route('agency.view_branch')->with(['notification' => 'Branch disabling has been rejected successfully', 'color' => 'success']);
+                if ($request->approve === 'approve') {
+                    AbBranch::where(['id' => $id])->update([
+                        'status' => 'Disabled',
+                        'isWaitingApproval' => 0,
+                        'approver_id' => $user_id,
+                        'isDisabled' => 2
+                    ]);
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch disabling has been approved successfully',
+                        'color' => 'success'
+                    ]);
+                }
             }
 
-            if ($request->approve == 'approve') {
-                AbBranch::where(['id' => $id])->update(['status' => 'Disabled', 'isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDisabled' => 2]);
-                return redirect()->route('agency.view_branch')->with(['notification' => 'Branch disabling has been approved successfully', 'color' => 'success']);
+            if ($branch->status === "Disabled") {
+                if ($request->reject === 'reject') {
+                    AbBranch::where(['id' => $id])->update([
+                        'isWaitingApproval' => 0,
+                        'approver_id' => $user_id,
+                        'isDisabled' => 2
+                    ]);
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch enabling has been rejected successfully',
+                        'color' => 'success'
+                    ]);
+                }
+
+                if ($request->approve === 'approve') {
+                    AbBranch::where(['id' => $id])->update([
+                        'status' => 'Active',
+                        'isWaitingApproval' => 0,
+                        'approver_id' => $user_id,
+                        'isDisabled' => 0
+                    ]);
+                    return redirect()->route('agency.view_branch')->with([
+                        'notification' => 'Branch enabling has been approved successfully',
+                        'color' => 'success'
+                    ]);
+                }
             }
+
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'Invalid branch status!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Disable Branch Act Approval Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while processing the disable branch approval request!',
+                'color' => 'danger'
+            ]);
         }
-        if ($branch->status == "Disabled") {
-            if ($request->reject == 'reject') {
-
-                AbBranch::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDisabled' => 2]);
-                return redirect()->route('agency.view_branch')->with(['notification' => 'Branch enabling has been rejected successfully', 'color' => 'success']);
-            }
-
-            if ($request->approve == 'approve') {
-                AbBranch::where(['id' => $id])->update(['status' => 'Active', 'isWaitingApproval' => 0, 'approver_id' => $user_id, 'isDisabled' => 0]);
-                return redirect()->route('agency.view_branch')->with(['notification' => 'Branch enabling has been approved successfully', 'color' => 'success']);
-            }
-        }
-
     }
 
     public function createAccountProduct()
@@ -1039,48 +1509,97 @@ class SettingsController extends Controller
             'account_product_code' => 'required|max:20'
         ]);
 
-        $db_action = AbAccountProduct::insert([
-            'account_product_type_code_name' => $request->account_product,
-            'account_product_type_code' => $request->account_product_code,
-            'account_description' => $request->account_description
-        ]);
+        try {
+            $db_action = AbAccountProduct::insert([
+                'account_product_type_code_name' => $request->account_product,
+                'account_product_type_code' => $request->account_product_code,
+                'account_description' => $request->account_description
+            ]);
 
-        if ($db_action == true) {
-            $notification = "Account Product added successfully";
-            $color = "success";
-            return redirect('agency/view_account_product')->with('notification', $notification)->with('color', $color);
-            /*$log = new Helper();
-            return $log->auditTrail("Created Branch","IB",$notification,'agency/view_branch',Auth::user()->getAuthIdentifier());*/
-        } else {
-            $notification = "Account Product was not added!";
-            $color = "danger";
+            if ($db_action) {
+                return redirect('agency/view_account_product')->with([
+                    'notification' => 'Account Product added successfully',
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect('agency/view_account_product')->with([
+                'notification' => 'Account Product was not added!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Store Account Product Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect('agency/view_account_product')->with([
+                'notification' => 'An error occurred while adding Account Product!',
+                'color' => 'danger'
+            ]);
         }
-
-        return redirect('agency/view_account_product')->with('notification', $notification)->with('color', $color);
     }
 
     public function approveBranch(Request $request, $id)
     {
-
-        $branch = AbBranch::findOrFail($id);
-        return view('agency.settings.approve_branch', compact('branch'));
+        try {
+            $branch = AbBranch::findOrFail($id);
+            return view('agency.settings.approve_branch', compact('branch'));
+        } catch (\Exception $e) {
+            Log::error('Approve Branch Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while accessing the approve branch page!',
+                'color' => 'danger'
+            ]);
+        }
     }
 
     public function approveBranchAct(Request $request, $id)
     {
         $user_id = Auth::id();
-        if ($request->reject == 'reject') {
 
-            AbBranch::where(['id' => $id])->update(['isWaitingApproval' => 2, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_branch')->with(['notification' => 'Branch has been rejected successfully', 'color' => 'success']);
+        try {
+            if ($request->reject === 'reject') {
+                AbBranch::where(['id' => $id])->update([
+                    'isWaitingApproval' => 2,
+                    'approver_id' => $user_id
+                ]);
+                return redirect()->route('agency.view_branch')->with([
+                    'notification' => 'Branch has been rejected successfully',
+                    'color' => 'success'
+                ]);
+            }
+
+            if ($request->approve === 'approve') {
+                AbBranch::where(['id' => $id])->update([
+                    'isWaitingApproval' => 0,
+                    'approver_id' => $user_id
+                ]);
+                return redirect()->route('agency.view_branch')->with([
+                    'notification' => 'Branch has been approved successfully',
+                    'color' => 'success'
+                ]);
+            }
+
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'Invalid action performed!',
+                'color' => 'danger'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Approve Branch Act Exception: ', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect()->route('agency.view_branch')->with([
+                'notification' => 'An error occurred while processing the approval action!',
+                'color' => 'danger'
+            ]);
         }
-
-        if ($request->approve == 'approve') {
-            AbBranch::where(['id' => $id])->update(['isWaitingApproval' => 0, 'approver_id' => $user_id]);
-            return redirect()->route('agency.view_branch')->with(['notification' => 'Branch has been approved successfully', 'color' => 'success']);
-        }
-
-
     }
 
     private $date_time;
@@ -1112,14 +1631,11 @@ class SettingsController extends Controller
 
                 $notification = "Branch updated successfully";
                 $color = "success";
-
-                /*$log = new Helper();
-                return $log->auditTrail("Updated Branch","AB",$notification,'agency/view_branch',Auth::user()->getAuthIdentifier());*/
                 return redirect('agency/view_branch')->with('notification', $notification)->with('color', $color);
-            } else {
-                $notification = "No change was made!";
-                $color = "danger";
             }
+
+            $notification = "No change was made!";
+            $color = "danger";
 
         } catch (\Exception $e) {
             $notification = $e->getMessage();
