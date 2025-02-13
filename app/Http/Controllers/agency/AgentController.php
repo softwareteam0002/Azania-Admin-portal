@@ -18,10 +18,8 @@ use App\TblABBankAccountTypes;
 use App\TblABInstitutionAccounts;
 use App\TblABInstitutionAccountTypes;
 use App\TblAgent;
-use App\TblAgentChargeType;
 use App\TblAgentDevice;
 use App\TblAgentService;
-use App\TblCharge;
 use App\TblTransaction;
 use Carbon\Carbon;
 use GuzzleHttp\Client;
@@ -1521,16 +1519,27 @@ class AgentController extends Controller
             $notification = "Agent account approved unsuccessfully!";
         }
 
-        $approve = TblABBankAccounts::where('account_id', $account_id)
-            ->update([
-                'registration_status' => $dual_status,
-                'approver_id' => $uid,
-                'isWaitingApproval' => 0
-            ]);
-        if ($approve == true) {
-            return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
-        } else {
+        try {
+            $approve = TblABBankAccounts::where('account_id', $account_id)
+                ->update([
+                    'registration_status' => $dual_status,
+                    'approver_id' => $uid,
+                    'isWaitingApproval' => 0
+                ]);
+
+            if ($approve) {
+                return redirect()->back()->with(['notification' => $notification, 'color' => 'success']);
+            }
+
             return redirect()->back()->with(['notification' => 'Agent Account approved/disapproved unsuccessfully!', 'color' => 'danger']);
+        } catch (\Exception $e) {
+            Log::error("APPROVE-AGENT-ACCOUNT-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return redirect()->back()->with(['notification' => 'An error occurred while processing the request. Please try again later.', 'color' => 'danger']);
         }
     }
 
@@ -1546,37 +1555,43 @@ class AgentController extends Controller
     //account update
     public function updateAgentAccount(Request $request)
     {
-        $uid = Auth::user()->id;
         $request->validate([
             'account_number' => 'required',
             'account_type_id' => 'required',
             'account_status' => 'required'
         ]);
 
-        $account = TblABBankAccounts::where('account_id', $request->account_id)
-            ->update([
-                'bank_account' => $request->account_number,
-                'account_type_id' => $request->account_type_id,
-                'account_status' => $request->account_status,
-                'registration_status' => 2,
-                'isWaitingApproval' => 1,
-                'approver_id' => 0
-            ]);
+        try {
+            $account = TblABBankAccounts::where('account_id', $request->account_id)
+                ->update([
+                    'bank_account' => $request->account_number,
+                    'account_type_id' => $request->account_type_id,
+                    'account_status' => $request->account_status,
+                    'registration_status' => 2,
+                    'isWaitingApproval' => 1,
+                    'approver_id' => 0
+                ]);
 
-        if ($account) {
-            $log = new Helper();
-            $log->auditTrail("Updated Account", "AB", 'Account updated successfully!', 'agency/accounts/' . $request->agent_id, Auth::user()->getAuthIdentifier());
-            // return redirect('agency/accounts/'.$request->agent_id)->with(['notification' => 'Account updated successfully!', 'color' => 'success']);
-        } else {
-            return redirect('agency/accounts/' . $request->agent_id)->with(['notification' => 'Account updated un successfully!', 'color' => 'danger']);
+            if ($account) {
+                $log = new Helper();
+                $log->auditTrail("Updated Account", "AB", 'Account updated successfully!', 'agency/accounts/' . $request->agent_id, Auth::user()->getAuthIdentifier());
+                return redirect('agency/accounts/' . $request->agent_id)->with(['notification' => 'Account updated successfully!', 'color' => 'success']);
+            }
+
+            return redirect('agency/accounts/' . $request->agent_id)->with(['notification' => 'Account updated unsuccessfully!', 'color' => 'danger']);
+        } catch (\Exception $e) {
+            Log::error("UPDATE-AGENT-ACCOUNT-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return redirect('agency/accounts/' . $request->agent_id)->with(['notification' => 'An error occurred while updating the account. Please try again later.', 'color' => 'danger']);
         }
     }
 
 
     public function storeAccountService(Request $request)
     {
-
-
         $uid = Auth::user()->id;
         $request->validate([
             'bank_service_ID' => 'required'
@@ -1613,106 +1628,29 @@ class AgentController extends Controller
     {
         $uid = Auth::user()->id;
         $account_id = $r->account_id;
-        $approve = BankServiceAccount::where('bank_account_id', $account_id)
-            ->update([
-                'approver_id' => $uid,
-                'isWaitingApproval' => 0
-            ]);
-        if ($approve == true) {
-            return redirect()->back()->with(['notification' => 'Account approved successfully!', 'color' => 'success']);
-        } else {
-            return redirect()->back()->with(['notification' => 'Account approved unsuccessfully!', 'color' => 'danger']);
-        }
-    }
 
-    public function approveAccount(Request $r)
-    {
-        $uid = Auth::user()->id;
-        $account_id = $r->account_id;
-        $approve = TblABBankAccounts::where('account_id', $account_id)
-            ->update([
-                'approver_id' => $uid,
-                'isWaitingApproval' => 0
-            ]);
-        if ($approve == true) {
-            return redirect()->back()->with(['notification' => 'Account approved successfully!', 'color' => 'success']);
-        } else {
-            return redirect()->back()->with(['notification' => 'Account approved unsuccessfully!', 'color' => 'danger']);
-        }
-    }
-
-    public function getCharges()
-    {
-        $services = TblCharge::all();
-
-        return view('agency.charges.charges', compact('services'));
-    }
-
-    public function createCharges()
-    {
-
-        $services = TblAgentService::all();
-        $types = TblAgentChargeType::all();
-
-        return view('agency.charges.create', compact('services', 'types'));
-    }
-
-    public function storeCharges(Request $request)
-    {
-
-        $request->validate([
-            'service_name' => 'required',
-            'charge_type' => 'required'
-        ]);
-
-        $insert = TblCharge::insert([
-            'service_id' => $request->service_name,
-            'charge_type_id' => $request->charge_type
-        ]);
-
-        if ($insert == true) {
-            $notification = 'Service Charge Added Successfully!';
-            $color = 'success';
-            $log = new Helper();
-            $log->auditTrail("Added Service Charge", "AB", $notification, 'agency/charges', Auth::user()->getAuthIdentifier());
-        } else {
-            $notification = 'Oops something went wrong!';
-            $color = 'danger';
-        }
-        return redirect()->back()->with(['notification' => $notification, 'color' => $color]);
-    }
-
-    public function editCharges($id)
-    {
-        $charge = TblCharge::where('charge_id', $id)->first();
-        $services = TblAgentService::all();
-        $types = TblAgentChargeType::all();
-
-        return view('agency.charges.edit', compact('charge', 'services', 'types'));
-    }
-
-    public function updateCharges(Request $request, $id)
-    {
         try {
-            $update = DB::connection('sqlsrv4')->table('tbl_agency_banking_charges')->where('charge_id', $id)->update(
-                ['service_name' => $request->service_name, 'charge_amount' => $request->charge_amount]
-            );
+            $approve = BankServiceAccount::where('bank_account_id', $account_id)
+                ->update([
+                    'approver_id' => $uid,
+                    'isWaitingApproval' => 0
+                ]);
 
-            if ($update == true) {
-                $notification = 'Service Charge Updated Successfully!';
-                $color = 'success';
-                $log = new Helper();
-                $log->auditTrail("Updated Service Charge", "AB", $notification, 'agency/charges', Auth::user()->getAuthIdentifier());
-            } else {
-                $notification = 'Oops something went wrong!';
-                $color = 'danger';
+            if ($approve) {
+                return redirect()->back()->with(['notification' => 'Account approved successfully!', 'color' => 'success']);
             }
-            return redirect()->back()->with(['notification' => $notification, 'color' => $color]);
+
+            return redirect()->back()->with(['notification' => 'Account approval failed!', 'color' => 'danger']);
         } catch (\Exception $e) {
-            return redirect()->back()->with(['notification' => $e->getMessage(), 'color' => $color]);
+            Log::error("APPROVE-ACCOUNT-SERVICE-ERROR: ", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return redirect()->back()->with(['notification' => 'An error occurred while approving the account. Please try again later.', 'color' => 'danger']);
         }
     }
-
 
     public function getInstitutionAccounts()
     {
