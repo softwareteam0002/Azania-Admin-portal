@@ -18,7 +18,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Facades\Excel;
-use App\Traits\HTTPSecurity;
 
 class InteroperabilityController extends Controller
 {
@@ -65,10 +64,15 @@ class InteroperabilityController extends Controller
         $file_name = 'agency_interoperability_charges.xlsx';
         $file_path = 'template/' . $file_name;
 
-        if (Storage::exists($file_path)) {
-            return response()->download(Storage::path($file_path), $file_name);
-        } else {
+        try {
+            if (Storage::exists($file_path)) {
+                return response()->download(Storage::path($file_path), $file_name);
+            }
+
             return redirect()->back()->with(['notification' => "Template doesn't exist", 'color' => "danger"]);
+        } catch (Exception $e) {
+            Log::error("Template download error: ", ['message' => $e->getMessage(), 'line' => $e->getLine(), 'file' => $e->getFile()]);
+            return redirect()->back()->with(['notification' => "An error occurred while downloading the template", 'color' => "danger"]);
         }
     }
 
@@ -80,19 +84,21 @@ class InteroperabilityController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return redirect()->back()->with(['notification' => $validator->errors(), 'color' => "danger"]);
+            return redirect()->back()->with([
+                'notification' => $validator->errors(),
+                'color' => "danger"
+            ]);
         }
-
 
         try {
             DB::beginTransaction();
-            $charge_type = $request->charge_type;
-            $batch_number = $this->generateBatchNumber($charge_type);
 
+            $chargeType = $request->charge_type;
+            $batchNumber = $this->generateBatchNumber($chargeType);
 
             DB::connection('sqlsrv4')->table('tbl_agency_banking_interoperability_charge_batches')->insert([
-                'charge_type' => $request->charge_type,
-                'batch_number' => $batch_number,
+                'charge_type' => $chargeType,
+                'batch_number' => $batchNumber,
                 'is_waitingApproval' => self::WAITING_APPROVAL,
                 'created_by' => Auth::user()->id,
                 'uuid' => Str::uuid(),
@@ -100,51 +106,53 @@ class InteroperabilityController extends Controller
                 'updated_at' => now(),
             ]);
 
-            Excel::import(new InteroperabilityChargeImport($batch_number, $charge_type), request()->file('file'));
+            Excel::import(new InteroperabilityChargeImport($batchNumber, $chargeType), $request->file('file'));
 
             DB::commit();
-            return redirect()->back()->with(['notification' => "Batch imported successfully, waiting approval", 'color' => "success"]);
+
+            return redirect()->back()->with([
+                'notification' => "Batch imported successfully, waiting approval",
+                'color' => "success"
+            ]);
         } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
-            $failures = $e->failures();
-            foreach ($failures as $failure) {
-                $failure->row(); // row that went wrong
-                $failure->attribute(); // either heading key (if using heading row concern) or column index
-                $failure->errors(); // Actual error messages from Laravel validator
-                $failure->values(); // The values of the row that has failed.
-            }
             DB::rollBack();
-            return redirect()->back()->with(['notification' => "The value of " . $failure->attribute() . " on row " . $failure->row() . " is not valid", 'color' => "danger"]);
+
+            $failure = $e->failures()->first();
+            $errorMessage = $failure
+                ? "The value of {$failure->attribute()} on row {$failure->row()} is not valid"
+                : "Validation error in the Excel file";
+
+            return redirect()->back()->with([
+                'notification' => $errorMessage,
+                'color' => "danger"
+            ]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error($e->getMessage() . "\n" . $e->getTraceAsString());
-            return redirect()->back()->with(['notification' => "Please fill all necessary fields in the excel file", 'color' => "danger"]);
-        }
+            Log::error("Error uploading charges: ", ['error' => $e->getMessage(), 'trace' => $e->getTrace()]);
 
+            return redirect()->back()->with([
+                'notification' => "An error occurred. Please fill all necessary fields in the Excel file.",
+                'color' => "danger"
+            ]);
+        }
     }
 
-    public function generateBatchNumber($chargeType)
+    public function generateBatchNumber($chargeType = null)
     {
         $last_batch_number = DB::connection('sqlsrv4')->table('tbl_agency_banking_interoperability_charge_batches')
             ->latest()->pluck('batch_number')->first();
 
-
         $prefix = 'CHARGES-';
 
-
         if (!isset($last_batch_number)) {
-
-            $batch_number = $prefix . "0000001";
-            return $batch_number;
+            return $prefix . "0000001";
         }
 
-        if (isset($last_batch_number)) {
-            $number = intval(substr($last_batch_number, 8));
+        $number = (int)substr($last_batch_number, 8);
 
-            $number++;
-            $number = sprintf("%07d", $number);
-            $batch_number = $prefix . strval($number);
-            return $batch_number;
-        }
+        $number++;
+        $number = sprintf("%07d", $number);
+        return $prefix . $number;
     }
 
     public function serviceAccountIndex()
@@ -172,7 +180,7 @@ class InteroperabilityController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return redirect()->back()->with(['notification' => $validator->errors(), 'color' => "danger"]);
+            return redirect()->back()->with(['notification' => $validator->errors()->first(), 'color' => "danger"]);
         }
 
         try {
@@ -187,10 +195,10 @@ class InteroperabilityController extends Controller
                         'is_active' => ($serviceAccount->is_active == self::ACTIVE) ? self::INACTIVE : self::ACTIVE
                     ]);
                 return redirect()->back()->with(['notification' => ($serviceAccount->is_active == self::INACTIVE) ? "Account activated successfully" : "Account deactivated successfully", 'color' => "success"]);
-            } else {
-                return redirect()->back()->with(['notification' => 'Account not found', 'color' => "danger"]);
             }
+            return redirect()->back()->with(['notification' => 'Account not found', 'color' => "danger"]);
         } catch (Exception $e) {
+            Log::error("Error updating account status: ", ['error' => $e->getMessage(), 'trace' => $e->getTrace()]);
             return redirect()->back()->with(['notification' => ($serviceAccount->is_active == self::INACTIVE) ? "Failed to activate account" : "Failed to deactivate account", 'color' => "danger"]);
         }
 
@@ -221,10 +229,10 @@ class InteroperabilityController extends Controller
                         'is_active' => self::INACTIVE
                     ]);
                 return redirect()->back()->with(['notification' => "Account updated successfully", 'color' => "success"]);
-            } else {
-                return redirect()->back()->with(['notification' => 'Account not found', 'color' => "danger"]);
             }
+            return redirect()->back()->with(['notification' => 'Account not found', 'color' => "danger"]);
         } catch (Exception $e) {
+            Log::error("Error updating account: ", ['error' => $e->getMessage(), 'trace' => $e->getTrace()]);
             return redirect()->back()->with(['notification' => "Failed to update account", 'color' => "danger"]);
         }
 
@@ -244,64 +252,68 @@ class InteroperabilityController extends Controller
         try {
             $serviceAccount = AbInteroperabilityCharge::where('uuid', $request->approval)->first();
 
-            if ($serviceAccount) {
-                if ($request->action == self::APPROVE) {
-                    $waitingApproval = 0;
-                } else {
-                    $waitingApproval = 2;
-                }
-
-                $serviceAccount->update([
-                    'is_waitingApproval' => $waitingApproval,
-                    'approved_by' => Auth::user()->id,
-                ]);
-
-                return redirect()->back()->with(['notification' => ($waitingApproval == self::REJECT) ? "Rejected successfully" : "Approved successfully", 'color' => "success"]);
-            } else {
-                return redirect()->back()->with(['notification' => 'Account not found', 'color' => "danger"]);
+            if (!$serviceAccount) {
+                return redirect()->back()->with(['notification' => 'Account not found', 'color' => 'danger']);
             }
+
+            $waitingApproval = ($request->action === self::APPROVE) ? 0 : 2;
+
+            $serviceAccount->update([
+                'is_waitingApproval' => $waitingApproval,
+                'approved_by' => Auth::id(),
+            ]);
+
+            $message = ($waitingApproval === self::REJECT) ? "Rejected successfully" : "Approved successfully";
+
+            return redirect()->back()->with(['notification' => $message, 'color' => 'success']);
         } catch (Exception $e) {
-            return redirect()->back()->with(['notification' => "Failed to approve/reject", 'color' => "danger"]);
+            Log::error("Error updating account: ", ['error' => $e->getMessage(), 'trace' => $e->getTrace()]);
+            return redirect()->back()->with(['notification' => 'Failed to approve/reject', 'color' => 'danger']);
         }
 
     }
 
     public function getBatchEntries(Request $request)
     {
-        $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
-        $request = json_decode($decryptedRequest, true);
-        $validator = Validator::make($request, [
-            'batchNo' => 'required',
-        ], [
-            'batchNo.required' => 'Batch number is required'
-        ]);
+        try {
+            $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
+            $request = json_decode($decryptedRequest, true);
+            $validator = Validator::make($request, [
+                'batchNo' => 'required',
+            ], [
+                'batchNo.required' => 'Batch number is required'
+            ]);
 
+            if ($validator->fails()) {
+                $encryptedData = $this->encrypt(json_encode(['code' => 400, 'message' => $validator->errors()->first()]), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedData]);
+            }
 
-        if ($validator->fails()) {
-            $encryptedData = $this->encrypt(json_encode(['code' => 400, 'message' => $validator->errors()->first()]), config("security.encryption_password"));
+            $data = [];
+            $entries = AbInteroperabilityCharge::query()->select('from_amount', 'to_amount', 'charge', 'is_active')->where('batch_number',
+                $request->batchNo)->get();
+
+            foreach ($entries as $entry) {
+                $entries = [
+                    'from_amount' => $entry->from_amount,
+                    'to_amount' => $entry->to_amount,
+                    'charge' => $entry->charge,
+                    'status' => ($entry->is_active == self::ACTIVE) ? 'Active' : 'Inactive',
+                ];
+                $data[] = $entries;
+            }
+
+            if ($entries) {
+                $encryptedData = $this->encrypt(json_encode(['code' => 200, 'charges' => $data]), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedData]);
+            }
+            $encryptedData = $this->encrypt(json_encode(['code' => 100, 'message' => 'No results found']), config("security.encryption_password"));
+            return response()->json(['data' => $encryptedData]);
+        } catch (\Exception $e) {
+            Log::error("Error in getBatchEntries: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
+            $encryptedData = $this->encrypt(json_encode(['code' => 500, 'message' => 'An error occurred']), config("security.encryption_password"));
             return response()->json(['data' => $encryptedData]);
         }
-
-        $data = [];
-        $entries = AbInteroperabilityCharge::query()->select('from_amount', 'to_amount', 'charge', 'is_active')->where('batch_number',
-            $request->batchNo)->get();
-
-        foreach ($entries as $entry) {
-            $entries = [
-                'from_amount' => $entry->from_amount,
-                'to_amount' => $entry->to_amount,
-                'charge' => $entry->charge,
-                'status' => ($entry->is_active == self::ACTIVE) ? 'Active' : 'Inactive',
-            ];
-            $data[] = $entries;
-        }
-
-        if ($entries) {
-            $encryptedData = $this->encrypt(json_encode(['code' => 200, 'charges' => $data]), config("security.encryption_password"));
-            return response()->json(['data' => $encryptedData]);
-        }
-        $encryptedData = $this->encrypt(json_encode(['code' => 100, 'message' => 'No results found']), config("security.encryption_password"));
-        return response()->json(['data' => $encryptedData]);
     }
 
     public function approveChargeBatch(Request $request)
@@ -321,81 +333,83 @@ class InteroperabilityController extends Controller
             $chargeEntries = AbInteroperabilityCharge::where('batch_number', $chargeBatch->batch_number)->get();
 
             if ($chargeBatch) {
-                if ($request->action == self::APPROVE) {
-                    $waitingApproval = 0;
-                } elseif ($request->action == self::REJECT) {
-                    $waitingApproval = 2;
-                } else {
-                    $status = ($chargeBatch->is_active == self::ACTIVE) ? self::INACTIVE : self::ACTIVE;
-                    $chargeBatch->update([
-                        'is_active' => $status,
-                    ]);
-                    AbInteroperabilityCharge::where('batch_number', $chargeBatch->batch_number)->update([
-                        'is_active' => $status,
-                    ]);
-
-                    DB::commit();
-                    return redirect()->back()->with(['notification' => ($chargeBatch->is_active == self::ACTIVE) ? "Activated successfully"
-                        : "Deactivated successfully", 'color' => "success"]);
+                switch ($request->action) {
+                    case self::APPROVE:
+                        $waitingApproval = 0;
+                        break;
+                    case self::REJECT:
+                        $waitingApproval = 2;
+                        break;
+                    default:
+                        $status = ($chargeBatch->is_active === self::ACTIVE) ? self::INACTIVE : self::ACTIVE;
+                        $chargeBatch->update(['is_active' => $status]);
+                        AbInteroperabilityCharge::where('batch_number', $chargeBatch->batch_number)->update(['is_active' => $status]);
+                        DB::commit();
+                        return redirect()->back()->with([
+                            'notification' => ($status === self::ACTIVE) ? "Activated successfully" : "Deactivated successfully",
+                            'color' => "success"
+                        ]);
                 }
 
                 AbInteroperabilityCharge::where('batch_number', $chargeBatch->batch_number)->update([
                     'is_waitingApproval' => $waitingApproval,
                     'approved_by' => Auth::user()->id,
-
                 ]);
 
                 $chargeBatch->update([
                     'is_waitingApproval' => $waitingApproval,
                     'approved_by' => Auth::user()->id,
                 ]);
+
                 DB::commit();
-                return redirect()->back()->with(['notification' => ($waitingApproval == self::REJECT) ? "Rejected successfully" : "Approved successfully", 'color' => "success"]);
-            } else {
-                DB::rollBack();
-                return redirect()->back()->with(['notification' => 'Batch not found', 'color' => "danger"]);
+                return redirect()->back()->with([
+                    'notification' => ($waitingApproval === self::REJECT) ? "Rejected successfully" : "Approved successfully",
+                    'color' => "success"
+                ]);
             }
+            DB::rollBack();
+            return redirect()->back()->with(['notification' => 'Batch not found', 'color' => "danger"]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::info(json_encode($e));
+            Log::error("Error in approveChargeBatch: ", ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return redirect()->back()->with(['notification' => "Exception occured,try again later!", 'color' => "danger"]);
         }
 
     }
 
-	public function incomingTransaction(Request $request)
+    public function incomingTransaction(Request $request)
     {
-		$decryptedRequest = $this->decryptRequest($request->data, env('ENCRYPTION_PASSWORD'));
-        //$decryptedRequest = $this->decryptRequest($request->data, env('ENCRYPTION_PASSWORD')); dd($decryptedRequest);
-        $request = json_decode($decryptedRequest, true);
-        Log::channel('interoperability')->info('Incoming-Transaction-Request:' . json_encode($request));
-        $validator = Validator::make($request, [
-            'transactionType' => 'required|in:' . self::AGENCY_WITHDRAW . ',' . self::AGENCY_DEPOSIT,
-            'amount' => 'required|numeric|min:' . self::MINIMUM_AMOUNT,
-            'transactionId' => 'required|min:12',
-            'rrn' => 'required|min:12',
-            'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
-            'cardNumber' => 'required|min:12',
-            'acquireBank' => 'required|digits:6',
-            'fromAccount' => 'required|numeric',
-        ]);
-
-        if ($validator->fails()) {
-			Log::channel('interoperability')->info('Incoming-Transaction-Response: ' . json_encode($validator->errors()->first()));
-            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedData]);
-        }
-
-        $request = (object)$request;
-
-        if ($this->checkTransactionId($request->transactionId)) {
-			Log::channel('interoperability')->info('Incoming-Transaction-Response: Transaction ID already exist');
-            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedData]);
-        }
-
-        DB::beginTransaction();
         try {
+            $decryptedRequest = $this->decryptRequest($request->data, env('ENCRYPTION_PASSWORD'));
+            $request = json_decode($decryptedRequest, true);
+            Log::channel('interoperability')->info('Incoming-Transaction-Request:' . json_encode($request));
+            $validator = Validator::make($request, [
+                'transactionType' => 'required|in:' . self::AGENCY_WITHDRAW . ',' . self::AGENCY_DEPOSIT,
+                'amount' => 'required|numeric|min:' . self::MINIMUM_AMOUNT,
+                'transactionId' => 'required|min:12',
+                'rrn' => 'required|min:12',
+                'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
+                'cardNumber' => 'required|min:12',
+                'acquireBank' => 'required|digits:6',
+                'fromAccount' => 'required|numeric',
+            ]);
+
+            if ($validator->fails()) {
+                Log::channel('interoperability')->info('Incoming-Transaction-Response: ' . json_encode($validator->errors()->first()));
+                $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedData]);
+            }
+
+            $request = (object)$request;
+
+            if ($this->checkTransactionId($request->transactionId)) {
+                Log::channel('interoperability')->info('Incoming-Transaction-Response: Transaction ID already exist');
+                $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedData]);
+            }
+
+            DB::beginTransaction();
+
             $serviceAccounts = DB::connection('sqlsrv4')
                 ->table('tbl_agency_banking_interoperability_service_accounts')
                 ->select('account_code', 'account_number')
@@ -423,8 +437,8 @@ class InteroperabilityController extends Controller
 
                 $withdrawalCharge = $cashWithdrawCharge ? $cashWithdrawCharge->charge : 0;
 
-				$serviceAccount = trim(strval($serviceAccounts->get(self::DEPOSIT_SERVICE_ACCOUNT)->account_number));
-				
+                $serviceAccount = trim(strval($serviceAccounts->get(self::DEPOSIT_SERVICE_ACCOUNT)->account_number));
+
                 $charges = $withdrawalCharge;
 
             } else {
@@ -436,10 +450,10 @@ class InteroperabilityController extends Controller
                     ->where('is_waitingApproval', 0)
                     ->first();
 
-                $depositCharge = $cashDeposit->charge;
-				$depositCharge = $cashDeposit ? $cashDeposit->charge : 0;
-				$serviceAccount = trim(strval($serviceAccounts->get(self::WITHDRAW_SERVICE_ACCOUNT)->account_number));
-				
+                //$depositCharge = $cashDeposit->charge;
+                $depositCharge = $cashDeposit ? $cashDeposit->charge : 0;
+                $serviceAccount = trim((string)$serviceAccounts->get(self::WITHDRAW_SERVICE_ACCOUNT)->account_number);
+
                 $charges = $depositCharge;
             }
             //store transaction
@@ -459,13 +473,13 @@ class InteroperabilityController extends Controller
                 'uuid' => Str::uuid()
             ]);
             DB::commit();
-			Log::channel('interoperability')->info('Incoming-Transaction-Response: Charges'. json_encode($charges));
-			Log::channel('interoperability')->info('Incoming-Transaction-Response: serviceAccount'. json_encode($serviceAccount));
-            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 200, 'charges' => $charges, 'serviceAccount' =>$serviceAccount]), env('ENCRYPTION_PASSWORD'));
-			return response()->json(['data' => $encryptedData]);
+            Log::channel('interoperability')->info('Incoming-Transaction-Response: Charges' . json_encode($charges));
+            Log::channel('interoperability')->info('Incoming-Transaction-Response: serviceAccount' . json_encode($serviceAccount));
+            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 200, 'charges' => $charges, 'serviceAccount' => $serviceAccount]), env('ENCRYPTION_PASSWORD'));
+            return response()->json(['data' => $encryptedData]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::channel('interoperability')->info('Incoming-Transaction-Exception:' . json_encode($e->getMessage()));
+            Log::channel('interoperability')->info('Incoming-Transaction-Exception:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 100, 'error' => 'Exception occured,try again later!']), env('ENCRYPTION_PASSWORD'));
             return response()->json(['data' => $encryptedData]);
         }
@@ -479,43 +493,42 @@ class InteroperabilityController extends Controller
 
     public function updateTransaction(Request $request)
     {
-		Log::channel('interoperability')->info('Update-Transaction-Request:' . json_encode($request->data));
-        $decryptedRequest = $this->decryptRequest(json_encode($request->data), env('ENCRYPTION_PASSWORD'));
-        $request = json_decode($decryptedRequest, true);
-        Log::channel('interoperability')->info('Update-Transaction-Request:' . json_encode($request));
-        $validator = Validator::make($request, [
-            'transactionId' => 'required',
-            'responseCode' => 'required',
-            'responseMessage' => 'required',
-            'authCode' => 'required',
-            'reversalState' => 'nullable|sometimes|in:True,False'
-        ]);
-
-        if ($validator->fails()) {
-            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedData]);
-        }
-
-        $request = (object)$request;
-        $updateTransaction = AbInteroperabilityTransaction::query()->where('transaction_id', $request->transactionId)->first();
-        if (!$updateTransaction) {
-            $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 100, 'message' => 'Transaction not found']), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedData]);
-        }
-
         try {
+            Log::channel('interoperability')->info('Update-Transaction-Request:' . json_encode($request->data));
+            $decryptedRequest = $this->decryptRequest(json_encode($request->data), env('ENCRYPTION_PASSWORD'));
+            $request = json_decode($decryptedRequest, true);
+            Log::channel('interoperability')->info('Update-Transaction-Request:' . json_encode($request));
+            $validator = Validator::make($request, [
+                'transactionId' => 'required',
+                'responseCode' => 'required',
+                'responseMessage' => 'required',
+                'authCode' => 'required',
+                'reversalState' => 'nullable|sometimes|in:True,False'
+            ]);
+
+            if ($validator->fails()) {
+                $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedData]);
+            }
+
+            $request = (object)$request;
+            $updateTransaction = AbInteroperabilityTransaction::query()->where('transaction_id', $request->transactionId)->first();
+            if (!$updateTransaction) {
+                $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 100, 'message' => 'Transaction not found']), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedData]);
+            }
+
             $updateTransaction->update([
                 'response_code' => $request->responseCode,
                 'response_message' => $request->responseMessage,
                 'auth_code' => $request->authCode,
-                //'to_account' => $request->toAccount,
                 'reversal_state' => $request->reversalState != null ? ($request->reversalState == 'True' ? 1 : 0) : null,
             ]);
-			Log::channel('interoperability')->info('Update-Transaction-Response: Successfully');
+            Log::channel('interoperability')->info('Update-Transaction-Response: Successfully');
             $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 200, 'message' => 'Transaction updated successfully']), env('ENCRYPTION_PASSWORD'));
             return response()->json(['data' => $encryptedData]);
         } catch (Exception $e) {
-            Log::channel('interoperability')->info('Update-Transaction-Exception:' . json_encode($e->getMessage()));
+            Log::channel('interoperability')->info('Update-Transaction-Exception:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $encryptedData = $this->encryptResponse(json_encode(['responseCode' => 100, 'message' => 'Exception occured,try again later!']), env('ENCRYPTION_PASSWORD'));
             return response()->json(['data' => $encryptedData]);
         }
@@ -523,34 +536,35 @@ class InteroperabilityController extends Controller
 
     public function outgoingTransaction(Request $request)
     {
-        $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
-        $request = json_decode($decryptedRequest, true);
-        Log::channel('interoperability')->info('Outgoing-Transaction-Request:' . json_encode($request));
-        $validator = Validator::make($request, [
-            'transactionType' => 'required|in:' . self::AGENCY_WITHDRAW . ',' . self::AGENCY_DEPOSIT,
-            'amount' => 'required|numeric|min:' . self::MINIMUM_AMOUNT,
-            'transactionId' => 'required|min:12',
-            'rrn' => 'required',
-            'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
-            'cardNumber' => 'required|min:12',
-            'agentId' => 'required|digits:6',
-            'acquireBank' => 'required|digits:6',
-            'fromAccount' => 'required|numeric',
-        ]);
-
-        if ($validator->fails()) {
-            $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), config("security.encryption_password"));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
-        $request = (object)$request;
-        if ($this->checkTransactionId($request->transactionId)) {
-            $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), config("security.encryption_password"));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
-        DB::beginTransaction();
         try {
+            $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
+            $request = json_decode($decryptedRequest, true);
+            Log::channel('interoperability')->info('Outgoing-Transaction-Request:' . json_encode($request));
+            $validator = Validator::make($request, [
+                'transactionType' => 'required|in:' . self::AGENCY_WITHDRAW . ',' . self::AGENCY_DEPOSIT,
+                'amount' => 'required|numeric|min:' . self::MINIMUM_AMOUNT,
+                'transactionId' => 'required|min:12',
+                'rrn' => 'required',
+                'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
+                'cardNumber' => 'required|min:12',
+                'agentId' => 'required|digits:6',
+                'acquireBank' => 'required|digits:6',
+                'fromAccount' => 'required|numeric',
+            ]);
+
+            if ($validator->fails()) {
+                $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+            $request = (object)$request;
+            if ($this->checkTransactionId($request->transactionId)) {
+                $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+            DB::beginTransaction();
+
             $serviceAccounts = DB::connection('sqlsrv4')
                 ->table('tbl_agency_banking_interoperability_service_accounts')
                 ->select('account_code', 'account_number')
@@ -629,7 +643,7 @@ class InteroperabilityController extends Controller
             return response()->json(['data' => $encryptedRequest]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::channel('interoperability')->info('Outgoing-Transaction-Exception:' . json_encode($e->getMessage()));
+            Log::channel('interoperability')->info('Outgoing-Transaction-Exception:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 100, 'error' => 'Exception occured,try again later!']), config("security.encryption_password"));
             return response()->json(['data' => $encryptedRequest]);
         }
@@ -638,31 +652,32 @@ class InteroperabilityController extends Controller
 
     public function balanceInquiry(Request $request)
     {
-        $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
-        $request = json_decode($decryptedRequest, true);
-        Log::channel('interoperability')->info('Balance-Inquiry-Request:' . json_encode($request));
-        $validator = Validator::make($request, [
-            'transactionType' => 'required|in:' . self::AGENCY_BALANCE_INQUIRY,
-            'accountNumber' => 'required|numeric',
-            'transactionId' => 'required|min:12',
-            'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
-            'acquireBank' => 'required|digits:6',
-            'agentId' => 'required|digits:6',
-            'cardNumber' => 'required|min:12',
-        ]);
-
-        if ($validator->fails()) {
-            $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), config("security.encryption_password"));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
-        if ($this->checkTransactionId($request->transactionId)) {
-            $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), config("security.encryption_password"));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
-        DB::beginTransaction();
         try {
+            $decryptedRequest = $this->decrypt($request->data, config("security.encryption_password"));
+            $request = json_decode($decryptedRequest, true);
+            Log::channel('interoperability')->info('Balance-Inquiry-Request:' . json_encode($request));
+            $validator = Validator::make($request, [
+                'transactionType' => 'required|in:' . self::AGENCY_BALANCE_INQUIRY,
+                'accountNumber' => 'required|numeric',
+                'transactionId' => 'required|min:12',
+                'terminalId' => 'required|regex:/^[a-zA-Z0-9]{8}$/',
+                'acquireBank' => 'required|digits:6',
+                'agentId' => 'required|digits:6',
+                'cardNumber' => 'required|min:12',
+            ]);
+
+            if ($validator->fails()) {
+                $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+            if ($this->checkTransactionId($request->transactionId)) {
+                $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 400, 'error' => 'Transaction ID already exist']), config("security.encryption_password"));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+            DB::beginTransaction();
+
             $balanceInquiry = AbInteroperabilityCharge::select('charge')
                 ->where('charge_type', self::BALANCE_INQUIRY)
                 ->where('is_active', self::ACTIVE)
@@ -697,8 +712,7 @@ class InteroperabilityController extends Controller
             return response()->json(['data' => $encryptedRequest]);
         } catch (Exception $e) {
             DB::rollBack();
-
-            Log::channel('interoperability')->info('Balance-Inquiry-Exception:' . json_encode($e->getMessage()));
+            Log::channel('interoperability')->info('Balance-Inquiry-Exception:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $encryptedRequest = $this->encrypt(json_encode(['responseCode' => 100, 'error' => 'Exception occured,try again later!']), config("security.encryption_password"));
             return response()->json(['data' => $encryptedRequest]);
         }
@@ -709,11 +723,6 @@ class InteroperabilityController extends Controller
         return Crypt::encryptString($cardNumber);
     }
 
-    public function decryptCardNumber($encryptedCardNumber)
-    {
-        return Crypt::decryptString($encryptedCardNumber);
-    }
-
     public function reportView()
     {
         $today = now();
@@ -722,17 +731,18 @@ class InteroperabilityController extends Controller
 
     public function export(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'from_date' => 'required|date',
-            'to_date' => 'required|date',
-            'status' => 'required|in:' . self::ALL . ',' . self::SUCCESS . ',' . self::FAILED
-        ]);
-
-        if ($validator->fails()) {
-            return redirect()->back()->with(['notification' => $validator->errors()->first(), 'color' => 'danger']);
-        }
-
         try {
+            $validator = Validator::make($request->all(), [
+                'from_date' => 'required|date',
+                'to_date' => 'required|date',
+                'status' => 'required|in:' . self::ALL . ',' . self::SUCCESS . ',' . self::FAILED
+            ]);
+
+            if ($validator->fails()) {
+                return redirect()->back()->with(['notification' => $validator->errors()->first(), 'color' => 'danger']);
+            }
+
+
             $fromDate = $request->from_date;
             $toDate = $request->to_date;
 
@@ -763,43 +773,44 @@ class InteroperabilityController extends Controller
 
     public function reversalInquiry(Request $request)
     {
-		Log::channel('interoperability')->info('Reversal-Inquiry-Encrypted:' . json_encode($request->all()));
-        $decryptedRequest = $this->decryptRequest($request->data, env('ENCRYPTION_PASSWORD'));
-        $request = json_decode($decryptedRequest, true);
-        $request = json_encode($request);
-		
-        Log::channel('interoperability')->info('Reversal-Inquiry-Request:' . $request);
-		$request = json_decode($request, true);
-        $validator = Validator::make($request, [
-            'transactionId' => 'required|regex:/^[a-zA-Z0-9]+$/',
-        ]);
-
-        if ($validator->fails()) {
-			Log::channel('interoperability')->info('Reversal-Inquiry-Response: '. json_encode($validator->errors()->first()));
-            $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedRequest]);
-        }	
-		$request = json_decode($decryptedRequest, true);
-        $transaction = AbInteroperabilityTransaction::where('transaction_id', $request['transactionId'])
-            ->first();
-
-        if (!$transaction) {
-			Log::channel('interoperability')->info('Reversal-Inquiry-Response: Record not found');
-            $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => 'Record not found']), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
-        //append 99 to original transaction id to mark it as reversal
-        $reversalTransactionId = trim($request['transactionId']. '99');
-
-		//check for duplicate reversals
-        if ($this->checkDuplicateReversal($reversalTransactionId)) {
-			Log::channel('interoperability')->info('Reversal-Inquiry-Response: Duplicate reversal');
-            $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 109, 'message' => 'Duplicate reversal for this transaction']), env('ENCRYPTION_PASSWORD'));
-            return response()->json(['data' => $encryptedRequest]);
-        }
-
         try {
+            Log::channel('interoperability')->info('Reversal-Inquiry-Encrypted:' . json_encode($request->all()));
+            $decryptedRequest = $this->decryptRequest($request->data, env('ENCRYPTION_PASSWORD'));
+            $request = json_decode($decryptedRequest, true);
+            $request = json_encode($request);
+
+            Log::channel('interoperability')->info('Reversal-Inquiry-Request:' . $request);
+            $request = json_decode($request, true);
+            $validator = Validator::make($request, [
+                'transactionId' => 'required|regex:/^[a-zA-Z0-9]+$/',
+            ]);
+
+            if ($validator->fails()) {
+                Log::channel('interoperability')->info('Reversal-Inquiry-Response: ' . json_encode($validator->errors()->first()));
+                $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => $validator->errors()->first()]), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+            $request = json_decode($decryptedRequest, true);
+            $transaction = AbInteroperabilityTransaction::where('transaction_id', $request['transactionId'])
+                ->first();
+
+            if (!$transaction) {
+                Log::channel('interoperability')->info('Reversal-Inquiry-Response: Record not found');
+                $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 400, 'error' => 'Record not found']), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+            //append 99 to original transaction id to mark it as reversal
+            $reversalTransactionId = trim($request['transactionId'] . '99');
+
+            //check for duplicate reversals
+            if ($this->checkDuplicateReversal($reversalTransactionId)) {
+                Log::channel('interoperability')->info('Reversal-Inquiry-Response: Duplicate reversal');
+                $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 109, 'message' => 'Duplicate reversal for this transaction']), env('ENCRYPTION_PASSWORD'));
+                return response()->json(['data' => $encryptedRequest]);
+            }
+
+
             //store new reversal transaction
             AbInteroperabilityTransaction::create([
                 'from_account' => $transaction->from_account,
@@ -816,75 +827,89 @@ class InteroperabilityController extends Controller
                 'transaction_charge' => $transaction->transaction_charge,
                 'uuid' => Str::uuid()
             ]);
-            $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 200, 'transaction' => trim($transaction->charge_response), 'reversalTransactionId' => $reversalTransactionId, 'authCode'=>$transaction->auth_code]), env('ENCRYPTION_PASSWORD'));
+            $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 200, 'transaction' => trim($transaction->charge_response), 'reversalTransactionId' => $reversalTransactionId, 'authCode' => $transaction->auth_code]), env('ENCRYPTION_PASSWORD'));
             return response()->json(['data' => $encryptedRequest]);
         } catch (Exception $e) {
-            Log::channel('interoperability')->info('Reversal-Inquiry-Exception:' . json_encode($e->getMessage()));
+            Log::channel('interoperability')->info('Reversal-Inquiry-Exception:', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             $encryptedRequest = $this->encryptResponse(json_encode(['responseCode' => 100, 'message' => 'Exception occured,try again later!']), env('ENCRYPTION_PASSWORD'));
             return response()->json(['data' => $encryptedRequest]);
         }
     }
 
-	private function checkDuplicateReversal($reversedTransactionId)
+    private function checkDuplicateReversal($reversedTransactionId)
     {
         return AbInteroperabilityTransaction::where('transaction_id', $reversedTransactionId)->exists();
     }
-	public function encryptResponse(string $data, string $password): string
+
+    public function encryptResponse(string $data, string $password): string
     {
-        $iv_len = 12;
-        $iv = random_bytes($iv_len);
-        $salt_len = 16;
-        $salt = random_bytes($salt_len);
-        $pw = $password;
+        try {
+            $iv_len = 12;
+            $iv = random_bytes($iv_len);
+            $salt_len = 16;
+            $salt = random_bytes($salt_len);
+            $pw = $password;
 
+            $tag = "";
+            $key = hash_pbkdf2('sha256', $pw, $salt, 65536, 32, true);
 
-        $tag = "";
-        $key = hash_pbkdf2('sha256', $pw, $salt, 65536, 32, true);
+            $encrypted = openssl_encrypt(
+                $data,
+                "aes-256-gcm",
+                $key,
+                $options = OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING,
+                $iv,
+                $tag,
+                "",
+                16
+            );
 
-        $encrypted = openssl_encrypt(
-            $data,
-            "aes-256-gcm",
-            $key,
-            $options=OPENSSL_RAW_DATA|OPENSSL_ZERO_PADDING,
-            $iv,
-            $tag,
-            "",
-            16
-        );
-
-        $result = $iv . $salt . $encrypted . $tag;
-        return base64_encode($result);
+            $result = $iv . $salt . $encrypted . $tag;
+            return base64_encode($result);
+        } catch (Exception $e) {
+            Log::error('Encryption error: ' . $e->getMessage(), ['file' => $e->getFile(), 'line' => $e->getLine()]);
+            throw new \RuntimeException('Failed to encrypt data');
+        }
     }
 
     public function decryptRequest(string $encodedData, string $password): string
     {
-        // Decode the base64 encoded data
-        $decodedData = base64_decode($encodedData);
+        try {
+            // Decode the base64 encoded data
+            $decodedData = base64_decode($encodedData);
 
-        // Extract IV, salt, tag, and ciphertext
-        $iv_len = 12;
-        $iv = substr($decodedData, 0, $iv_len);
-        $salt_len = 16;
-        $salt = substr($decodedData, $iv_len, $salt_len);
-        $tag_len = 16;
-        $ciphertext = substr($decodedData, $iv_len + $salt_len, -16); // Exclude last 16 bytes for tag
-        $tag = substr($decodedData, -$tag_len); // Extract last 16 bytes for tag
+            // Extract IV, salt, tag, and ciphertext
+            $iv_len = 12;
+            $iv = substr($decodedData, 0, $iv_len);
+            $salt_len = 16;
+            $salt = substr($decodedData, $iv_len, $salt_len);
+            $tag_len = 16;
+            $ciphertext = substr($decodedData, $iv_len + $salt_len, -16); // Exclude last 16 bytes for tag
+            $tag = substr($decodedData, -$tag_len); // Extract last 16 bytes for tag
 
-        $pw = $password;
+            $pw = $password;
 
-        // Generate key using PBKDF2
-        $key = hash_pbkdf2('sha256', $pw, $salt, 65536, 32, true);
+            // Generate key using PBKDF2
+            $key = hash_pbkdf2('sha256', $pw, $salt, 65536, 32, true);
 
-        // Decrypt using AES-256-GCM
-        $decrypted = openssl_decrypt(
-            $ciphertext,
-            "aes-256-gcm",
-            $key,
-            OPENSSL_RAW_DATA,
-            $iv,
-            $tag
-        );
+            // Decrypt using AES-256-GCM
+            $decrypted = openssl_decrypt(
+                $ciphertext,
+                "aes-256-gcm",
+                $key,
+                OPENSSL_RAW_DATA,
+                $iv,
+                $tag
+            );
 
-        return $decrypted;
+            if ($decrypted === false) {
+                throw new \RuntimeException('Decryption failed');
+            }
+
+            return $decrypted;
+        } catch (Exception $e) {
+            Log::error('Decryption error: ' . $e->getMessage(), ['file' => $e->getFile(), 'line' => $e->getLine()]);
+            throw new \RuntimeException('Failed to decrypt data');
+        }
     }
 }
